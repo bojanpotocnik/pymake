@@ -4,17 +4,30 @@ parsing command lines into argv and making sure that no shell magic is being use
 """
 from __future__ import print_function
 
-#TODO: ship pyprocessing?
+import glob
+import logging
+# TODO: ship pyprocessing?
 import multiprocessing
-import subprocess, shlex, re, logging, sys, traceback, os, imp, glob
+import os
+import re
 import site
+import subprocess
+import sys
+import traceback
 from collections import deque
+
 # XXXkhuey Work around http://bugs.python.org/issue1731717
 subprocess._cleanup = lambda: None
-import command, util
-from pymake import errors
-if sys.platform=='win32':
-    import win32process
+try:
+    import command, util
+    from pymake import errors
+    if sys.platform == 'win32':
+        import win32process
+except ModuleNotFoundError:
+    from . import command, util
+    from . import errors
+    if sys.platform == 'win32':
+        from . import win32process
 
 _log = logging.getLogger('pymake.process')
 
@@ -208,10 +221,10 @@ def clinetoargv(cline, cwd):
 # executed within a shell. It also contains a set of commands that are known
 # to be giving problems when run directly instead of through the msys shell.
 shellwords = (':', '.', 'break', 'cd', 'continue', 'exec', 'exit', 'export',
-              'getopts', 'hash', 'pwd', 'readonly', 'return', 'shift', 
+              'getopts', 'hash', 'pwd', 'readonly', 'return', 'shift',
               'test', 'times', 'trap', 'umask', 'unset', 'alias',
               'set', 'bind', 'builtin', 'caller', 'command', 'declare',
-              'echo', 'enable', 'help', 'let', 'local', 'logout', 
+              'echo', 'enable', 'help', 'let', 'local', 'logout',
               'printf', 'read', 'shopt', 'source', 'type', 'typeset',
               'ulimit', 'unalias', 'set', 'find')
 
@@ -505,7 +518,7 @@ class ParallelContext(object):
         condition.release()
 
         return jobs
-        
+
     @staticmethod
     def spin():
         """

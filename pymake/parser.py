@@ -33,9 +33,16 @@ token, tokenoffset, afteroffset *may be None*. That means there is more text
 coming.
 """
 
-import logging, re, os, sys
-import data, functions, util, parserdata
-from pymake import errors
+import logging
+import os
+import re
+
+try:
+    import data, functions, util, parserdata
+    from pymake import errors
+except ModuleNotFoundError:
+    from . import data, functions, util, parserdata
+    from . import errors
 
 _log = logging.getLogger('pymake.parser')
 
@@ -462,7 +469,7 @@ def parsestring(s, filename):
 
                 condstack.pop().endloc = d.getloc(offset)
                 continue
-            
+
             if kword == 'else':
                 if len(condstack) == 1:
                     raise errors.SyntaxError("unmatched 'else' directive",
@@ -672,7 +679,7 @@ def parsemakesyntax(d, offset, stopon, iterfunc):
         @see iterdata
         @see itermakefilechars
         @see itercommandchars
- 
+
     @return a tuple (expansion, token, offset). If all the data is consumed,
     token and offset will be None
     """
@@ -761,7 +768,7 @@ def parsemakesyntax(d, offset, stopon, iterfunc):
                 fn = stacktop.function
                 fn.append(stacktop.expansion.finish())
                 fn.setup()
-                
+
                 stacktop = stacktop.parent
                 stacktop.expansion.appendfunc(fn)
             else:

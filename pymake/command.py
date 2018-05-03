@@ -9,10 +9,18 @@ structure, environment, and working directory. Typically they will all share a p
 except when a submake specifies -j1 when the parent make is building in parallel.
 """
 
-import os, subprocess, sys, logging, time, traceback, re
+import logging
+import os
+import re
+import sys
 from optparse import OptionParser
-import data, parserdata, process, util
-from pymake import errors
+
+try:
+    import data, parserdata, process, util
+    from pymake import errors
+except ModuleNotFoundError:
+    from . import data, parserdata, process, util
+    from . import errors
 
 # TODO: If this ever goes from relocatable package to system-installed, this may need to be
 # a configured-in path.
@@ -53,7 +61,7 @@ def parsemakeflags(env):
             if i == len(makeflags):
                 raise errors.DataError("MAKEFLAGS has trailing backslash")
             c = makeflags[i]
-            
+
         curopt += c
         i += 1
 

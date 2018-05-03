@@ -3,10 +3,19 @@ Makefile functions.
 """
 from __future__ import print_function
 
-import parser, util
-import subprocess, os, logging, sys
-from globrelative import glob
-from pymake import errors
+import logging
+import os
+import subprocess
+import sys
+
+try:
+    import parser, util
+    from globrelative import glob
+    from pymake import errors
+except ModuleNotFoundError:
+    from . import parser, util
+    from .globrelative import glob
+    from . import errors
 
 log = logging.getLogger('pymake.data')
 
@@ -753,7 +762,7 @@ class FlavorFunction(Function):
 
     def resolve(self, makefile, variables, fd, setting):
         varname = self._arguments[0].resolvestr(makefile, variables, setting)
-        
+
         flavor, source, value = variables.get(varname)
         if flavor is None:
             r = 'undefined'
@@ -871,4 +880,7 @@ functionmap = {
     'info': InfoFunction,
 }
 
-import data
+try:
+    import data
+except ModuleNotFoundError:
+    from . import data

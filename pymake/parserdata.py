@@ -1,9 +1,17 @@
 from __future__ import print_function
 
-import logging, re, os
-import data, parser, util
-from pymake.globrelative import hasglob, glob
-from pymake import errors
+import logging
+import os
+import re
+
+try:
+    import data, parser, util
+    from pymake.globrelative import hasglob, glob
+    from pymake import errors
+except ModuleNotFoundError:
+    from . import data, parser, util
+    from .globrelative import hasglob, glob
+    from . import errors
 
 try:
     from cStringIO import StringIO
@@ -508,6 +516,22 @@ class SetVariable(Statement):
                 self.vnameexp.to_source(),
                 self.token,
                 value)
+
+    def name(self):
+        if isinstance(self.vnameexp, data.StringExpansion):
+            return self.vnameexp.s
+        else:
+            return self.vnameexp
+
+    def __str__(self):
+        return "<SetVariable(%s %s %s, %s)>" % (self.name(), self.token, self.value, self.targetexp)
+
+    def __repr__(self):
+        return "<SetVariable(%s: %s %s %s, %s) at 0x%016X>" % (
+            self.valueloc, self.name(), self.token, self.value, self.targetexp, id(self)
+        )
+
+
 
 class Condition(object):
     """
