@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     from . import util
 
-_globcheck = re.compile('[[*?]')
+_globcheck = re.compile('[\[*?]')
 
 def hasglob(p):
     return _globcheck.search(p) is not None
