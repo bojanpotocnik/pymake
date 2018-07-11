@@ -1,5 +1,3 @@
-
-
 class MakeError(Exception):
     def __init__(self, message, loc=None):
         self.msg = message
@@ -38,5 +36,3 @@ class PythonError(Exception):
 
     def __str__(self):
         return self.message
-
-

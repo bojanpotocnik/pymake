@@ -7,19 +7,21 @@ import logging
 import os.path
 import unittest
 
-from pymake.data import Expansion
-from pymake.data import StringExpansion
-from pymake.functions import BasenameFunction
-from pymake.functions import SubstitutionRef
-from pymake.functions import VariableRef
-from pymake.functions import WordlistFunction
-from pymake.parserdata import Include
-from pymake.parserdata import SetVariable
-from pymake.parser import parsestring
-from pymake.parser import SyntaxError
+from ..pymake.data import Expansion
+from ..pymake.data import StringExpansion
+from ..pymake.errors import SyntaxError
+from ..pymake.functions import BasenameFunction
+from ..pymake.functions import SubstitutionRef
+from ..pymake.functions import VariableRef
+from ..pymake.functions import WordlistFunction
+from ..pymake.parser import parsestring
+from ..pymake.parserdata import Include
+from ..pymake.parserdata import SetVariable
+
 
 class TestBase(unittest.TestCase):
     pass
+
 
 class VariableRefTest(TestBase):
     def test_string_name(self):
@@ -42,6 +44,7 @@ class VariableRefTest(TestBase):
         v = VariableRef(None, e)
 
         self.assertEqual(v.to_source(), '$(foobar)')
+
 
 class StandardFunctionTest(TestBase):
     def test_basename(self):
@@ -80,6 +83,7 @@ class StandardFunctionTest(TestBase):
 
         self.assertEqual(f.to_source(), '${wordlist foo,foo ( bar}')
 
+
 class StringExpansionTest(TestBase):
     def test_simple(self):
         e = StringExpansion('foobar', None)
@@ -102,6 +106,7 @@ class StringExpansionTest(TestBase):
 
         e = StringExpansion(' ', None)
         self.assertEqual(e.to_source(), ' ')
+
 
 class ExpansionTest(TestBase):
     def test_single_string(self):
@@ -128,6 +133,7 @@ class ExpansionTest(TestBase):
         e.appendstr(' $bar')
         self.assertEqual(e.to_source(escape_variables=True), 'foo $$bar')
 
+
 class SubstitutionRefTest(TestBase):
     def test_simple(self):
         name = StringExpansion('foo', None)
@@ -136,6 +142,7 @@ class SubstitutionRefTest(TestBase):
         s = SubstitutionRef(None, name, c, o)
 
         self.assertEqual(s.to_source(), '$(foo:%.c=%.o)')
+
 
 class SetVariableTest(TestBase):
     def test_simple(self):
@@ -164,6 +171,7 @@ class SetVariableTest(TestBase):
 
         self.assertEqual(v.to_source(), 'BAR: FOO += value')
 
+
 class IncludeTest(TestBase):
     def test_include(self):
         e = StringExpansion('rules.mk', None)
@@ -172,6 +180,7 @@ class IncludeTest(TestBase):
 
         i = Include(e, False, False)
         self.assertEqual(i.to_source(), '-include rules.mk')
+
 
 class IfdefTest(TestBase):
     def test_simple(self):
@@ -192,6 +201,7 @@ class IfdefTest(TestBase):
         statements = parsestring(source, 'foo.mk')
         self.assertEqual(statements[0].to_source(), source)
 
+
 class IfeqTest(TestBase):
     def test_simple(self):
         source = 'ifeq ($(foo),bar)\nhello = $(world)\nendif'
@@ -204,6 +214,7 @@ class IfeqTest(TestBase):
 
         statements = parsestring(source, 'foo.mk')
         self.assertEqual(statements.to_source(), source)
+
 
 class ConditionBlocksTest(TestBase):
     def test_mixed_conditions(self):
@@ -227,7 +238,8 @@ class ConditionBlocksTest(TestBase):
         source = 'ifneq (x , x)\n$(error stripping)\nendif'
         statements = parsestring(source, 'foo.mk')
         self.assertEqual(statements.to_source(),
-                'ifneq (x,x)\n$(error stripping)\nendif')
+                         'ifneq (x,x)\n$(error stripping)\nendif')
+
 
 class MakefileCorupusTest(TestBase):
     """Runs the make files from the pymake corpus through the formatter.
@@ -273,7 +285,7 @@ class MakefileCorupusTest(TestBase):
             # (whitespace and some semantics aren't preserved).
             reformatted_again = new_statements.to_source()
             self.assertEqual(reformatted, reformatted_again,
-                '%s has lossless reformat.' % filename)
+                             '%s has lossless reformat.' % filename)
 
             self.assertEqual(len(statements), len(new_statements))
 
@@ -282,7 +294,8 @@ class MakefileCorupusTest(TestBase):
                 formatted = new_statements[i]
 
                 self.assertEqual(original, formatted, '%s %d: %s != %s' % (filename,
-                    i, original, formatted))
+                                                                           i, original, formatted))
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)

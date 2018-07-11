@@ -17,11 +17,17 @@ The test file may contain lines at the beginning to alter the default behavior. 
 """
 from __future__ import print_function
 
-from subprocess import Popen, PIPE, STDOUT
+import glob
+import os
+import re
+import shutil
+import sys
 from optparse import OptionParser
-import os, re, sys, shutil, glob
+from subprocess import Popen, STDOUT
+
 
 class ParentDict(dict):
+    # noinspection PyMissingConstructor
     def __init__(self, parent, **kwargs):
         self.d = dict(kwargs)
         self.parent = parent
@@ -34,6 +40,7 @@ class ParentDict(dict):
             return self.d[k]
 
         return self.parent[k]
+
 
 thisdir = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,6 +64,7 @@ for a in args:
     elif os.path.isdir(a):
         makefiles.extend(sorted(glob.glob(os.path.join(a, '*.mk'))))
 
+
 def runTest(makefile, make, logfile, options):
     """
     Given a makefile path, test it with a given `make` and return
@@ -73,7 +81,7 @@ def runTest(makefile, make, logfile, options):
 
     if retcode != options['returncode']:
         return False, "FAIL (returncode=%i)" % retcode
-        
+
     logfd = open(logfile)
     stdout = logfd.read()
     logfd.close()
@@ -95,6 +103,7 @@ def runTest(makefile, make, logfile, options):
 
     return True, 'PASS'
 
+
 print("%-30s%-28s%-28s" % ("Test:", "gmake:", "pymake:"))
 
 gmakefails = 0
@@ -105,9 +114,10 @@ tre = re.compile('^#T (gmake |pymake )?([a-z-]+)(?:: (.*))?$')
 for makefile in makefiles:
     # For some reason, MAKEFILE_LIST uses native paths in GNU make on Windows
     # (even in MSYS!) so we pass both TESTPATH and NATIVE_TESTPATH
-    cline = ['-C', opts.tempdir, '-f', os.path.abspath(makefile), 'TESTPATH=%s' % thisdir.replace('\\','/'), 'NATIVE_TESTPATH=%s' % thisdir]
+    cline = ['-C', opts.tempdir, '-f', os.path.abspath(makefile), 'TESTPATH=%s' % thisdir.replace('\\', '/'),
+             'NATIVE_TESTPATH=%s' % thisdir]
     if sys.platform == 'win32':
-        #XXX: hack so we can specialize the separator character on windows.
+        # XXX: hack so we can specialize the separator character on windows.
         # we really shouldn't need this, but y'know
         cline += ['__WIN32__=1']
 
@@ -118,7 +128,7 @@ for makefile in makefiles:
         'commandline': cline,
         'pass': True,
         'skip': False,
-        }
+    }
 
     gmakeoptions = ParentDict(options)
     pymakeoptions = ParentDict(options)

@@ -1,5 +1,8 @@
 import os
 
+from .errors import DataError
+
+
 def normaljoin(path, suffix):
     """
     Combine the given path with the suffix, and normalize if necessary to shrink the path to avoid hitting path length limits
@@ -9,11 +12,12 @@ def normaljoin(path, suffix):
         result = os.path.normpath(result)
     return result
 
+
 def joiniter(fd, it):
     """
     Given an iterator that returns strings, write the words with a space in between each.
     """
-    
+
     it = iter(it)
     for i in it:
         fd.write(i)
@@ -22,6 +26,7 @@ def joiniter(fd, it):
     for i in it:
         fd.write(' ')
         fd.write(i)
+
 
 def checkmsyscompat():
     """For msys compatibility on windows, honor the SHELL environment variable,
@@ -43,9 +48,11 @@ def checkmsyscompat():
             shell += ".exe"
     return (shell, msys)
 
+
 if hasattr(str, 'partition'):
     def strpartition(str, token):
         return str.partition(token)
+
 
     def strrpartition(str, token):
         return str.rpartition(token)
@@ -60,6 +67,7 @@ else:
 
         return str[:offset], token, str[offset + len(token):]
 
+
     def strrpartition(str, token):
         """Python 2.4 compatible str.rpartition"""
 
@@ -69,14 +77,6 @@ else:
 
         return str[:offset], token, str[offset + len(token):]
 
-try:
-    from __builtin__ import any
-except ImportError:
-    def any(it):
-        for i in it:
-            if i:
-                return True
-        return False
 
 class _MostUsedItem(object):
     __slots__ = ('key', 'o', 'count')
@@ -89,6 +89,7 @@ class _MostUsedItem(object):
     def __repr__(self):
         return "MostUsedItem(key=%r, count=%i, o=%r)" % (self.key, self.count, self.o)
 
+
 class MostUsedCache(object):
     def __init__(self, capacity, creationfunc, verifyfunc):
         self.capacity = capacity
@@ -96,7 +97,7 @@ class MostUsedCache(object):
         self.vfunc = verifyfunc
 
         self.d = {}
-        self.active = [] # lazily sorted!
+        self.active = []  # lazily sorted!
 
     def setactive(self, item):
         if item in self.active:

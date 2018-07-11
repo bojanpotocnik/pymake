@@ -1,6 +1,7 @@
-import pymake.data, pymake.parser, pymake.parserdata, pymake.functions
-import unittest
 import logging
+import unittest
+
+from .. import pymake
 
 
 def multitest(cls):
@@ -11,10 +12,12 @@ def multitest(cls):
         setattr(cls, 'test_%s' % name, m)
     return cls
 
+
 class TestBase(unittest.TestCase):
     def assertEqual(self, a, b, msg=""):
         """Actually print the values which weren't equal, if things don't work out!"""
         unittest.TestCase.assertEqual(self, a, b, "%s got %r expected %r" % (msg, a, b))
+
 
 class DataTest(TestBase):
     testdata = {
@@ -23,25 +26,29 @@ class DataTest(TestBase):
              ((0, "f", 1, 0), (2, "f", 1, 2), (3, "f", 1, 4))),
         'twoline':
             ("line1 \n\tl\tine2", "f", 1, 4,
-             ((0, "f", 1, 4), (5, "f", 1, 9), (6, "f", 1, 10), (7, "f", 2, 0), (8, "f", 2, 4), (10, "f", 2, 8), (13, "f", 2, 11))),
+             ((0, "f", 1, 4), (5, "f", 1, 9), (6, "f", 1, 10), (7, "f", 2, 0), (8, "f", 2, 4), (10, "f", 2, 8),
+              (13, "f", 2, 11))),
     }
 
     def runSingle(self, data, filename, line, col, results):
         d = pymake.parser.Data(data, 0, len(data), pymake.parserdata.Location(filename, line, col))
         for pos, file, lineno, col in results:
-            loc = d.getloc(pos)
+            loc = d.get_location(pos)
             self.assertEqual(loc.path, file, "data file offset %i" % pos)
             self.assertEqual(loc.line, lineno, "data line offset %i" % pos)
             self.assertEqual(loc.column, col, "data col offset %i" % pos)
+
+
 multitest(DataTest)
+
 
 class LineEnumeratorTest(TestBase):
     testdata = {
         'simple': (
             'Hello, world', [
                 ('Hello, world', 1),
-                ]
-            ),
+            ]
+        ),
         'multi': (
             'Hello\nhappy  \n\nworld\n', [
                 ('Hello', 1),
@@ -49,27 +56,29 @@ class LineEnumeratorTest(TestBase):
                 ('', 3),
                 ('world', 4),
                 ('', 5),
-                ]
-            ),
+            ]
+        ),
         'continuation': (
             'Hello, \\\n world\nJellybeans!', [
                 ('Hello, \\\n world', 1),
                 ('Jellybeans!', 3),
-                ]
-            ),
+            ]
+        ),
         'multislash': (
             'Hello, \\\\\n world', [
                 ('Hello, \\\\', 1),
                 (' world', 2),
-                ]
-            )
-        }
+            ]
+        )
+    }
 
     def runSingle(self, s, lines):
         gotlines = [(d.s[d.lstart:d.lend], d.loc.line) for d in pymake.parser.enumeratelines(s, 'path')]
         self.assertEqual(gotlines, lines)
 
+
 multitest(LineEnumeratorTest)
+
 
 class IterTest(TestBase):
     testdata = {
@@ -77,64 +86,65 @@ class IterTest(TestBase):
             pymake.parser.iterdata,
             "plaindata # test\n",
             "plaindata # test\n"
-            ),
+        ),
         'makecomment': (
             pymake.parser.itermakefilechars,
             "VAR = val # comment",
             "VAR = val "
-            ),
+        ),
         'makeescapedcomment': (
             pymake.parser.itermakefilechars,
             "VAR = val \# escaped hash",
             "VAR = val # escaped hash"
-            ),
+        ),
         'makeescapedslash': (
             pymake.parser.itermakefilechars,
             "VAR = val\\\\",
             "VAR = val\\\\",
-            ),
+        ),
         'makecontinuation': (
             pymake.parser.itermakefilechars,
             "VAR = VAL  \\\n  continuation # comment \\\n  continuation",
             "VAR = VAL continuation "
-            ),
+        ),
         'makecontinuation2': (
             pymake.parser.itermakefilechars,
             "VAR = VAL  \\  \\\n continuation",
             "VAR = VAL  \\ continuation"
-            ),
+        ),
         'makeawful': (
             pymake.parser.itermakefilechars,
             "VAR = VAL  \\\\# comment\n",
             "VAR = VAL  \\"
-            ),
+        ),
         'command': (
             pymake.parser.itercommandchars,
             "echo boo # comment",
             "echo boo # comment",
-            ),
+        ),
         'commandcomment': (
             pymake.parser.itercommandchars,
             "echo boo \# comment",
             "echo boo \# comment",
-            ),
+        ),
         'commandcontinue': (
             pymake.parser.itercommandchars,
             "echo boo # \\\n\t  command 2",
             "echo boo # \\\n  command 2"
-            ),
+        ),
     }
 
     def runSingle(self, ifunc, idata, expected):
         d = pymake.parser.Data.fromstring(idata, 'IterTest data')
 
-        it = pymake.parser._alltokens.finditer(d.s, 0, d.lend)
-        actual = ''.join( [c for c, t, o, oo in ifunc(d, 0, ('dummy-token',), it)] )
+        it = pymake.parser._alltokens.finditer(d.s, 0, d.line_end)
+        actual = ''.join([c for c, t, o, oo in ifunc(d, 0, ('dummy-token',), it)])
         self.assertEqual(actual, expected)
 
         if ifunc == pymake.parser.itermakefilechars:
             print("testing %r" % expected)
             self.assertEqual(pymake.parser.flattenmakesyntax(d, 0), expected)
+
 
 multitest(IterTest)
 
@@ -147,18 +157,18 @@ multitest(IterTest)
 #        'definenesting': (
 #            pymake.parser.iterdefinechars,
 #            """define BAR # comment
-#random text
-#endef not what you think!
-#endef # comment is ok\n""",
+# random text
+# endef not what you think!
+# endef # comment is ok\n""",
 #            """define BAR # comment
-#random text
-#endef not what you think!"""
+# random text
+# endef not what you think!"""
 #            ),
 #        'defineescaped': (
 #            pymake.parser.iterdefinechars,
 #            """value   \\
-#endef
-#endef\n""",
+# endef
+# endef\n""",
 #            "value endef"
 #        ),
 
@@ -201,7 +211,7 @@ class MakeSyntaxTest(TestBase):
                         [{'type': 'VariableRef',
                           '.vname': ['VAL']},
                          ]),
-        }
+    }
 
     def compareRecursive(self, actual, expected, path):
         self.assertEqual(len(actual), len(expected),
@@ -233,11 +243,13 @@ class MakeSyntaxTest(TestBase):
     def runSingle(self, s, startat, stopat, stopoffset, expansion):
         d = pymake.parser.Data.fromstring(s, pymake.parserdata.Location('testdata', 1, 0))
 
-        a, t, offset = pymake.parser.parsemakesyntax(d, startat, stopat, pymake.parser.itermakefilechars)
+        a, t, offset = pymake.parser.parse_make_syntax(d, startat, stopat, pymake.parser.itermakefilechars)
         self.compareRecursive(a, expansion, [])
         self.assertEqual(offset, stopoffset)
 
+
 multitest(MakeSyntaxTest)
+
 
 class VariableTest(TestBase):
     testdata = """
@@ -270,7 +282,9 @@ class VariableTest(TestBase):
             else:
                 self.assertEqual(val.resolvestr(m, m.variables), v, 'variable named %s' % k)
 
+
 class SimpleRuleTest(TestBase):
+    # noinspection PyPep8
     testdata = """
     VAR = value
 TSPEC = dummy
@@ -307,6 +321,7 @@ all:: test test2 $(VAR)
         self.assertEqual(len(irule.targetpatterns), 1, "%.o target pattern count")
         self.assertEqual(len(irule.prerequisites), 1, "%.o prerequisite count")
         self.assertEqual(irule.targetpatterns[0].match('foo.o'), 'foo', "%.o stem")
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)

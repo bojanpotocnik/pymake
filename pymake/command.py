@@ -15,20 +15,18 @@ import re
 import sys
 from optparse import OptionParser
 
-try:
-    import data, parserdata, process, util
-    from pymake import errors
-except ModuleNotFoundError:
-    from . import data, parserdata, process, util
-    from . import errors
+from . import data, parserdata, process, util
+from . import errors
 
 # TODO: If this ever goes from relocatable package to system-installed, this may need to be
 # a configured-in path.
 
-makepypath = util.normaljoin(os.path.dirname(__file__), '../make.py')
+make_py_path = util.normaljoin(os.path.dirname(__file__), '../make.py')
 
-_simpleopts = re.compile(r'^[a-zA-Z]+(\s|$)')
-def parsemakeflags(env):
+_simple_options = re.compile(r'^[a-zA-Z]+(\s|$)')
+
+
+def parse_make_flags(env):
     """
     Parse MAKEFLAGS from the environment into a sequence of command-line arguments.
     """
@@ -39,18 +37,18 @@ def parsemakeflags(env):
     if makeflags == '':
         return []
 
-    if _simpleopts.match(makeflags):
+    if _simple_options.match(makeflags):
         makeflags = '-' + makeflags
 
-    opts = []
-    curopt = ''
+    options = []
+    current_options = ''
 
     i = 0
     while i < len(makeflags):
         c = makeflags[i]
         if c.isspace():
-            opts.append(curopt)
-            curopt = ''
+            options.append(current_options)
+            current_options = ''
             i += 1
             while i < len(makeflags) and makeflags[i].isspace():
                 i += 1
@@ -62,14 +60,16 @@ def parsemakeflags(env):
                 raise errors.DataError("MAKEFLAGS has trailing backslash")
             c = makeflags[i]
 
-        curopt += c
+        current_options += c
         i += 1
 
-    if curopt != '':
-        opts.append(curopt)
+    if current_options != '':
+        options.append(current_options)
 
-    return opts
+    return options
 
+
+# noinspection PyUnusedLocal
 def _version(*args):
     print("""pymake: GNU-compatible make program
 Copyright (C) 2009 The Mozilla Foundation <http://www.mozilla.org/>
@@ -82,14 +82,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.""")
 
+
 _log = logging.getLogger('pymake.execution')
 
-class _MakeContext(object):
-    def __init__(self, makeflags, makelevel, workdir, context, env, targets, options, ostmts, overrides, cb):
-        self.makeflags = makeflags
-        self.makelevel = makelevel
 
-        self.workdir = workdir
+class _MakeContext(object):
+    def __init__(self, make_flags, make_level, working_dir, context, env, targets, options, ostmts, overrides, cb):
+        self.make_flags = make_flags
+        self.make_level = make_level
+
+        self.working_dir = working_dir
         self.context = context
         self.env = env
         self.targets = targets
@@ -100,9 +102,13 @@ class _MakeContext(object):
 
         self.restarts = 0
 
-        self.remakecb(True)
+        self.makefile = None
+        self.real_targets = None
+        self.t_stack = None
 
-    def remakecb(self, remade, error=None):
+        self.remake_cb(True)
+
+    def remake_cb(self, remade, error=None):
         if error is not None:
             print(error)
             self.context.defer(self.cb, 2)
@@ -110,16 +116,17 @@ class _MakeContext(object):
 
         if remade:
             if self.restarts > 0:
-                _log.info("make.py[%i]: Restarting makefile parsing", self.makelevel)
+                _log.info("make.py[%i]: Restarting makefile parsing", self.make_level)
 
             self.makefile = data.Makefile(restarts=self.restarts,
-                                          make='%s %s' % (sys.executable.replace('\\', '/'), makepypath.replace('\\', '/')),
-                                          makeflags=self.makeflags,
+                                          make='%s %s' % (
+                                              sys.executable.replace('\\', '/'), make_py_path.replace('\\', '/')),
+                                          makeflags=self.make_flags,
                                           makeoverrides=self.overrides,
-                                          workdir=self.workdir,
+                                          workdir=self.working_dir,
                                           context=self.context,
                                           env=self.env,
-                                          makelevel=self.makelevel,
+                                          makelevel=self.make_level,
                                           targets=self.targets,
                                           keepgoing=self.options.keepgoing,
                                           silent=self.options.silent,
@@ -132,7 +139,7 @@ class _MakeContext(object):
                 for f in self.options.makefiles:
                     self.makefile.include(f)
                 self.makefile.finishparsing()
-                self.makefile.remakemakefiles(self.remakecb)
+                self.makefile.remakemakefiles(self.remake_cb)
             except errors.MakeError as e:
                 print(e)
                 self.context.defer(self.cb, 2)
@@ -146,40 +153,47 @@ class _MakeContext(object):
                 return
 
             _log.info("Making default target %s", self.makefile.defaulttarget)
-            self.realtargets = [self.makefile.defaulttarget]
-            self.tstack = ['<default-target>']
+            self.real_targets = [self.makefile.defaulttarget]
+            self.t_stack = ['<default-target>']
         else:
-            self.realtargets = self.targets
-            self.tstack = ['<command-line>']
+            self.real_targets = self.targets
+            self.t_stack = ['<command-line>']
 
-        self.makefile.gettarget(self.realtargets.pop(0)).make(self.makefile, self.tstack, cb=self.makecb)
+        self.makefile.gettarget(self.real_targets.pop(0)).make(self.makefile, self.t_stack, cb=self.make_cb)
 
-    def makecb(self, error, didanything):
+    # noinspection PyUnusedLocal
+    def make_cb(self, error, did_anything):
         assert error in (True, False)
 
         if error:
             self.context.defer(self.cb, 2)
             return
 
-        if not len(self.realtargets):
+        if not len(self.real_targets):
             if self.options.printdir:
-                print("make.py[%i]: Leaving directory '%s'" % (self.makelevel, self.workdir))
+                print("make.py[%i]: Leaving directory '%s'" % (self.make_level, self.working_dir))
             sys.stdout.flush()
 
             self.context.defer(self.cb, 0)
         else:
-            self.makefile.gettarget(self.realtargets.pop(0)).make(self.makefile, self.tstack, self.makecb)
+            self.makefile.gettarget(self.real_targets.pop(0)).make(self.makefile, self.t_stack, self.make_cb)
+
 
 def main(args, env, cwd, cb):
     """
     Start a single makefile execution, given a command line, working directory, and environment.
 
-    @param cb a callback to notify with an exit code when make execution is finished.
+    :param args:
+    :param env:
+    :param cwd:
+    :param cb: a callback to notify with an exit code when make execution is finished.
     """
 
-    try:
-        makelevel = int(env.get('MAKELEVEL', '0'))
+    # noinspection SpellCheckingInspection
+    make_level = int(env.get('MAKELEVEL', '0'))
+    options = None
 
+    try:
         op = OptionParser()
         op.add_option('-f', '--file', '--makefile',
                       action='append',
@@ -188,15 +202,19 @@ def main(args, env, cwd, cb):
         op.add_option('-d',
                       action="store_true",
                       dest="verbose", default=False)
+        # noinspection SpellCheckingInspection
         op.add_option('-k', '--keep-going',
                       action="store_true",
                       dest="keepgoing", default=False)
+        # noinspection SpellCheckingInspection
         op.add_option('--debug-log',
                       dest="debuglog", default=None)
         op.add_option('-C', '--directory',
                       dest="directory", default=None)
+        # noinspection SpellCheckingInspection
         op.add_option('-v', '--version', action="store_true",
                       dest="printversion", default=False)
+        # noinspection SpellCheckingInspection
         op.add_option('-j', '--jobs', type="int",
                       dest="jobcount", default=1)
         op.add_option('-w', '--print-directory', action="store_true",
@@ -205,11 +223,12 @@ def main(args, env, cwd, cb):
                       dest="printdir", default=True)
         op.add_option('-s', '--silent', action="store_true",
                       dest="silent", default=False)
+        # noinspection SpellCheckingInspection
         op.add_option('-n', '--just-print', '--dry-run', '--recon',
                       action="store_true",
                       dest="justprint", default=False)
 
-        options, arguments1 = op.parse_args(parsemakeflags(env))
+        options, arguments1 = op.parse_args(parse_make_flags(env))
         options, arguments2 = op.parse_args(args, values=options)
 
         op.destroy()
@@ -221,67 +240,69 @@ def main(args, env, cwd, cb):
             cb(0)
             return
 
-        shortflags = []
-        longflags = []
+        short_flags = []
+        long_flags = []
 
         if options.keepgoing:
-            shortflags.append('k')
+            short_flags.append('k')
 
         if options.printdir:
-            shortflags.append('w')
+            short_flags.append('w')
 
         if options.silent:
-            shortflags.append('s')
+            short_flags.append('s')
             options.printdir = False
 
         if options.justprint:
-            shortflags.append('n')
+            short_flags.append('n')
 
-        loglevel = logging.WARNING
+        log_level = logging.WARNING
         if options.verbose:
-            loglevel = logging.DEBUG
-            shortflags.append('d')
+            log_level = logging.DEBUG
+            short_flags.append('d')
 
-        logkwargs = {}
+        log_kwargs = {}
         if options.debuglog:
-            logkwargs['filename'] = options.debuglog
-            longflags.append('--debug-log=%s' % options.debuglog)
+            log_kwargs['filename'] = options.debuglog
+            long_flags.append('--debug-log=%s' % options.debuglog)
 
         if options.directory is None:
-            workdir = cwd
+            work_dir = cwd
         else:
-            workdir = util.normaljoin(cwd, options.directory)
+            work_dir = util.normaljoin(cwd, options.directory)
 
         if options.jobcount != 1:
-            longflags.append('-j%i' % (options.jobcount,))
+            long_flags.append('-j%i' % (options.jobcount,))
 
-        makeflags = ''.join(shortflags)
-        if len(longflags):
-            makeflags += ' ' + ' '.join(longflags)
+        makeflags = ''.join(short_flags)
+        if len(long_flags):
+            makeflags += ' ' + ' '.join(long_flags)
 
-        logging.basicConfig(level=loglevel, **logkwargs)
+        logging.basicConfig(level=log_level, **log_kwargs)
 
         context = process.getcontext(options.jobcount)
 
         if options.printdir:
-            print("make.py[%i]: Entering directory '%s'" % (makelevel, workdir))
+            print("make.py[%i]: Entering directory '%s'" % (make_level, work_dir))
             sys.stdout.flush()
 
         if len(options.makefiles) == 0:
-            if os.path.exists(util.normaljoin(workdir, 'Makefile')):
+            if os.path.exists(util.normaljoin(work_dir, 'Makefile')):
                 options.makefiles.append('Makefile')
             else:
                 print("No makefile found")
                 cb(2)
                 return
 
-        ostmts, targets, overrides = parserdata.parsecommandlineargs(arguments)
+        statements, targets, overrides = parserdata.parsecommandlineargs(arguments)
 
-        _MakeContext(makeflags, makelevel, workdir, context, env, targets, options, ostmts, overrides, cb)
+        _MakeContext(makeflags, make_level, work_dir, context, env, targets, options, statements, overrides, cb)
     except errors.MakeError as e:
         print(e)
-        if options.printdir:
-            print("make.py[%i]: Leaving directory '%s'" % (makelevel, workdir))
+        if options is not None:
+            if options.printdir:
+                # noinspection PyUnboundLocalVariable
+                print("make.py[%i]: Leaving directory '%s'" % (make_level, work_dir))
         sys.stdout.flush()
         cb(2)
         return

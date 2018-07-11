@@ -1,7 +1,7 @@
 import unittest
 
-import pymake.data
-import pymake.functions
+from .. import pymake
+
 
 class VariableRefTest(unittest.TestCase):
     def test_get_expansions(self):
@@ -10,6 +10,7 @@ class VariableRefTest(unittest.TestCase):
 
         exps = list(f.expansions())
         self.assertEqual(len(exps), 1)
+
 
 class GetExpansionsTest(unittest.TestCase):
     def test_get_arguments(self):
@@ -49,6 +50,7 @@ class GetExpansionsTest(unittest.TestCase):
         self.assertEqual(len(exps), 3)
 
         self.assertFalse(f.is_filesystem_dependent)
+
 
 if __name__ == '__main__':
     unittest.main()

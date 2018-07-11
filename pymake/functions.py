@@ -8,16 +8,13 @@ import os
 import subprocess
 import sys
 
-try:
-    import parser, util
-    from globrelative import glob
-    from pymake import errors
-except ModuleNotFoundError:
-    from . import parser, util
-    from .globrelative import glob
-    from . import errors
+from . import data
+from . import errors
+from . import parser, util
+from .globrelative import glob
 
 log = logging.getLogger('pymake.data')
+
 
 def emit_expansions(descend, *expansions):
     """Helper function to emit all expansions within an input set."""
@@ -34,6 +31,8 @@ def emit_expansions(descend, *expansions):
             else:
                 yield e
 
+
+# noinspection PyUnresolvedReferences
 class Function(object):
     """
     An object that represents a function call. This class is always subclassed
@@ -61,7 +60,8 @@ class Function(object):
         argc = len(self._arguments)
 
         if argc < self.minargs:
-            raise errors.DataError("Not enough arguments to function %s, requires %s" % (self.name, self.minargs), self.loc)
+            raise errors.DataError("Not enough arguments to function %s, requires %s" % (self.name, self.minargs),
+                                   self.loc)
 
         assert self.maxargs == 0 or argc <= self.maxargs, "Parser screwed up, gave us too many args"
 
@@ -130,7 +130,7 @@ class Function(object):
         return "%s<%s>(%r)" % (
             self.__class__.__name__, self.loc,
             ','.join([repr(a) for a in self._arguments]),
-            )
+        )
 
     def __eq__(self, other):
         if not hasattr(self, 'name'):
@@ -142,6 +142,7 @@ class Function(object):
         if self.name != other.name:
             return False
 
+        # noinspection PyProtectedMember
         if len(self._arguments) != len(other._arguments):
             return False
 
@@ -153,6 +154,7 @@ class Function(object):
                 a = self._arguments[i]
                 a.lstrip()
 
+                # noinspection PyProtectedMember
                 b = other._arguments[i]
                 b.lstrip()
 
@@ -161,6 +163,7 @@ class Function(object):
 
                 continue
 
+            # noinspection PyProtectedMember
             if self._arguments[i] != other._arguments[i]:
                 return False
 
@@ -169,11 +172,13 @@ class Function(object):
     def __ne__(self, other):
         return not self.__eq__(other)
 
+
 class VariableRef(Function):
-    AUTOMATIC_VARIABLES = set(['@', '%', '<', '?', '^', '+', '|', '*'])
+    AUTOMATIC_VARIABLES = {'@', '%', '<', '?', '^', '+', '|', '*'}
 
     __slots__ = ('vname', 'loc')
 
+    # noinspection PyMissingConstructor
     def __init__(self, loc, vname):
         self.loc = loc
         assert isinstance(vname, (data.Expansion, data.StringExpansion))
@@ -215,11 +220,13 @@ class VariableRef(Function):
 
         return self.vname == other.vname
 
+
 class SubstitutionRef(Function):
     """$(VARNAME:.c=.o) and $(VARNAME:%.c=%.o)"""
 
     __slots__ = ('loc', 'vname', 'substfrom', 'substto')
 
+    # noinspection PyMissingConstructor
     def __init__(self, loc, varname, substfrom, substto):
         self.loc = loc
         self.vname = varname
@@ -258,7 +265,7 @@ class SubstitutionRef(Function):
 
     def expansions(self, descend=False):
         return emit_expansions(descend, self.vname, self.substfrom,
-                self.substto)
+                               self.substto)
 
     def __repr__(self):
         return "SubstitutionRef<%s>(%r:%r=%r)" % (
@@ -268,8 +275,9 @@ class SubstitutionRef(Function):
         if not isinstance(other, SubstitutionRef):
             return False
 
-        return self.vname == other.vname and self.substfrom == other.substfrom \
-                and self.substto == other.substto
+        return (self.vname == other.vname and self.substfrom == other.substfrom
+                and self.substto == other.substto)
+
 
 class SubstFunction(Function):
     name = 'subst'
@@ -283,6 +291,7 @@ class SubstFunction(Function):
         r = self._arguments[1].resolvestr(makefile, variables, setting)
         d = self._arguments[2].resolvestr(makefile, variables, setting)
         fd.write(d.replace(s, r))
+
 
 class PatSubstFunction(Function):
     name = 'patsubst'
@@ -299,6 +308,7 @@ class PatSubstFunction(Function):
         fd.write(' '.join([p.subst(r, word, False)
                            for word in self._arguments[2].resolvesplit(makefile, variables, setting)]))
 
+
 class StripFunction(Function):
     name = 'strip'
     minargs = 1
@@ -308,6 +318,7 @@ class StripFunction(Function):
 
     def resolve(self, makefile, variables, fd, setting):
         util.joiniter(fd, self._arguments[0].resolvesplit(makefile, variables, setting))
+
 
 class FindstringFunction(Function):
     name = 'findstring'
@@ -323,6 +334,7 @@ class FindstringFunction(Function):
             return
         fd.write(s)
 
+
 class FilterFunction(Function):
     name = 'filter'
     minargs = 2
@@ -335,7 +347,8 @@ class FilterFunction(Function):
                  for p in self._arguments[0].resolvesplit(makefile, variables, setting)]
 
         fd.write(' '.join([w for w in self._arguments[1].resolvesplit(makefile, variables, setting)
-                           if util.any((p.match(w) for p in plist))]))
+                           if any((p.match(w) for p in plist))]))
+
 
 class FilteroutFunction(Function):
     name = 'filter-out'
@@ -349,7 +362,8 @@ class FilteroutFunction(Function):
                  for p in self._arguments[0].resolvesplit(makefile, variables, setting)]
 
         fd.write(' '.join([w for w in self._arguments[1].resolvesplit(makefile, variables, setting)
-                           if not util.any((p.match(w) for p in plist))]))
+                           if not any((p.match(w) for p in plist))]))
+
 
 class SortFunction(Function):
     name = 'sort'
@@ -361,6 +375,7 @@ class SortFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         d = set(self._arguments[0].resolvesplit(makefile, variables, setting))
         util.joiniter(fd, sorted(d))
+
 
 class WordFunction(Function):
     name = 'word'
@@ -377,6 +392,7 @@ class WordFunction(Function):
         if n < 1 or n > len(words):
             return
         fd.write(words[n - 1])
+
 
 class WordlistFunction(Function):
     name = 'wordlist'
@@ -401,6 +417,7 @@ class WordlistFunction(Function):
 
         util.joiniter(fd, words[nfrom - 1:nto])
 
+
 class WordsFunction(Function):
     name = 'words'
     minargs = 1
@@ -410,6 +427,7 @@ class WordsFunction(Function):
 
     def resolve(self, makefile, variables, fd, setting):
         fd.write(str(len(self._arguments[0].resolvesplit(makefile, variables, setting))))
+
 
 class FirstWordFunction(Function):
     name = 'firstword'
@@ -423,6 +441,7 @@ class FirstWordFunction(Function):
         if len(l):
             fd.write(l[0])
 
+
 class LastWordFunction(Function):
     name = 'lastword'
     minargs = 1
@@ -435,6 +454,7 @@ class LastWordFunction(Function):
         if len(l):
             fd.write(l[-1])
 
+
 def pathsplit(path, default='./'):
     """
     Splits a path into dirpart, filepart on the last slash. If there is no slash, dirpart
@@ -446,6 +466,7 @@ def pathsplit(path, default='./'):
 
     return dir + slash, file
 
+
 class DirFunction(Function):
     name = 'dir'
     minargs = 1
@@ -454,6 +475,7 @@ class DirFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         fd.write(' '.join([pathsplit(path)[0]
                            for path in self._arguments[0].resolvesplit(makefile, variables, setting)]))
+
 
 class NotDirFunction(Function):
     name = 'notdir'
@@ -465,6 +487,7 @@ class NotDirFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         fd.write(' '.join([pathsplit(path)[1]
                            for path in self._arguments[0].resolvesplit(makefile, variables, setting)]))
+
 
 class SuffixFunction(Function):
     name = 'suffix'
@@ -483,6 +506,7 @@ class SuffixFunction(Function):
 
     def resolve(self, makefile, variables, fd, setting):
         util.joiniter(fd, self.suffixes(self._arguments[0].resolvesplit(makefile, variables, setting)))
+
 
 class BasenameFunction(Function):
     name = 'basename'
@@ -504,6 +528,7 @@ class BasenameFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         util.joiniter(fd, self.basenames(self._arguments[0].resolvesplit(makefile, variables, setting)))
 
+
 class AddSuffixFunction(Function):
     name = 'addsuffix'
     minargs = 2
@@ -516,6 +541,7 @@ class AddSuffixFunction(Function):
 
         fd.write(' '.join([w + suffix for w in self._arguments[1].resolvesplit(makefile, variables, setting)]))
 
+
 class AddPrefixFunction(Function):
     name = 'addprefix'
     minargs = 2
@@ -525,6 +551,7 @@ class AddPrefixFunction(Function):
         prefix = self._arguments[0].resolvestr(makefile, variables, setting)
 
         fd.write(' '.join([prefix + w for w in self._arguments[1].resolvesplit(makefile, variables, setting)]))
+
 
 class JoinFunction(Function):
     name = 'join'
@@ -546,6 +573,7 @@ class JoinFunction(Function):
 
         util.joiniter(fd, self.iterjoin(list1, list2))
 
+
 class WildcardFunction(Function):
     name = 'wildcard'
     minargs = 1
@@ -556,13 +584,14 @@ class WildcardFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         patterns = self._arguments[0].resolvesplit(makefile, variables, setting)
 
-        fd.write(' '.join([x.replace('\\','/')
+        fd.write(' '.join([x.replace('\\', '/')
                            for p in patterns
                            for x in glob(makefile.workdir, p)]))
 
     @property
     def is_filesystem_dependent(self):
         return True
+
 
 class RealpathFunction(Function):
     name = 'realpath'
@@ -576,6 +605,7 @@ class RealpathFunction(Function):
     def is_filesystem_dependent(self):
         return True
 
+
 class AbspathFunction(Function):
     name = 'abspath'
     minargs = 1
@@ -587,6 +617,7 @@ class AbspathFunction(Function):
         assert os.path.isabs(makefile.workdir)
         fd.write(' '.join([util.normaljoin(makefile.workdir, path).replace('\\', '/')
                            for path in self._arguments[0].resolvesplit(makefile, variables, setting)]))
+
 
 class IfFunction(Function):
     name = 'if'
@@ -608,6 +639,7 @@ class IfFunction(Function):
         elif len(self._arguments) > 2:
             return self._arguments[2].resolve(makefile, variables, fd, setting)
 
+
 class OrFunction(Function):
     name = 'or'
     minargs = 1
@@ -621,6 +653,7 @@ class OrFunction(Function):
             if r != '':
                 fd.write(r)
                 return
+
 
 class AndFunction(Function):
     name = 'and'
@@ -638,6 +671,7 @@ class AndFunction(Function):
                 return
 
         fd.write(r)
+
 
 class ForEachFunction(Function):
     name = 'foreach'
@@ -663,8 +697,9 @@ class ForEachFunction(Function):
             # conform with GNU make. However, automatic variables have low
             # priority. So, we must force its assignment to occur.
             v.set(vname, data.Variables.FLAVOR_SIMPLE,
-                    data.Variables.SOURCE_AUTOMATIC, w, force=True)
+                  data.Variables.SOURCE_AUTOMATIC, w, force=True)
             e.resolve(makefile, v, fd, setting)
+
 
 class CallFunction(Function):
     name = 'call'
@@ -695,6 +730,7 @@ class CallFunction(Function):
         # but we'll do it anyway
         e.resolve(makefile, v, fd, setting + [vname])
 
+
 class ValueFunction(Function):
     name = 'value'
     minargs = 1
@@ -708,6 +744,7 @@ class ValueFunction(Function):
         flavor, source, value = variables.get(varname, expand=False)
         if value is not None:
             fd.write(value)
+
 
 class EvalFunction(Function):
     name = 'eval'
@@ -723,6 +760,7 @@ class EvalFunction(Function):
         stmts = parser.parsestring(self._arguments[0].resolvestr(makefile, variables, setting),
                                    'evaluation from %s' % self.loc)
         stmts.execute(makefile)
+
 
 class OriginFunction(Function):
     name = 'origin'
@@ -750,8 +788,11 @@ class OriginFunction(Function):
             r = 'automatic'
         elif source == data.Variables.SOURCE_IMPLICIT:
             r = 'default'
+        else:
+            raise ValueError("Unknown source: {}".format(source))
 
         fd.write(r)
+
 
 class FlavorFunction(Function):
     name = 'flavor'
@@ -770,7 +811,11 @@ class FlavorFunction(Function):
             r = 'recursive'
         elif flavor == data.Variables.FLAVOR_SIMPLE:
             r = 'simple'
+        else:
+            raise ValueError("Unknown flavor {}".format(flavor))
+
         fd.write(r)
+
 
 class ShellFunction(Function):
     name = 'shell'
@@ -780,7 +825,8 @@ class ShellFunction(Function):
     __slots__ = Function.__slots__
 
     def resolve(self, makefile, variables, fd, setting):
-        from process import prepare_command
+        from .process import prepare_command
+
         cline = self._arguments[0].resolvestr(makefile, variables, setting)
         executable, cline = prepare_command(cline, makefile.workdir, self.loc)
 
@@ -809,6 +855,7 @@ class ShellFunction(Function):
 
         fd.write(stdout)
 
+
 class ErrorFunction(Function):
     name = 'error'
     minargs = 1
@@ -819,6 +866,7 @@ class ErrorFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         v = self._arguments[0].resolvestr(makefile, variables, setting)
         raise errors.DataError(v, self.loc)
+
 
 class WarningFunction(Function):
     name = 'warning'
@@ -831,6 +879,7 @@ class WarningFunction(Function):
         v = self._arguments[0].resolvestr(makefile, variables, setting)
         log.warning(v)
 
+
 class InfoFunction(Function):
     name = 'info'
     minargs = 1
@@ -841,6 +890,7 @@ class InfoFunction(Function):
     def resolve(self, makefile, variables, fd, setting):
         v = self._arguments[0].resolvestr(makefile, variables, setting)
         print(v)
+
 
 functionmap = {
     'subst': SubstFunction,
@@ -880,7 +930,5 @@ functionmap = {
     'info': InfoFunction,
 }
 
-try:
-    import data
-except ModuleNotFoundError:
-    from . import data
+# noinspection PyPep8
+# from . import data

@@ -1,6 +1,6 @@
-import pymake.data, pymake.functions, pymake.util
 import unittest
-import re
+
+from .. import pymake
 
 
 def multitest(cls):
@@ -10,6 +10,7 @@ def multitest(cls):
 
         setattr(cls, 'test_%s' % name, m)
     return cls
+
 
 class SplitWordsTest(unittest.TestCase):
     testdata = (
@@ -21,6 +22,7 @@ class SplitWordsTest(unittest.TestCase):
         for s, e in self.testdata:
             w = s.split()
             self.assertEqual(w, e, 'splitwords(%r)' % (s,))
+
 
 class GetPatSubstTest(unittest.TestCase):
     testdata = (
@@ -41,6 +43,7 @@ class GetPatSubstTest(unittest.TestCase):
                           for word in words))
             self.assertEqual(a, e, 'Pattern(%r).subst(%r, %r)' % (s, r, d))
 
+
 class LRUTest(unittest.TestCase):
     # getkey, expected, funccount, debugitems
     expected = (
@@ -60,7 +63,8 @@ class LRUTest(unittest.TestCase):
 
     def runTest(self):
         self.funccount = 0
-        c = pymake.util.LRUCache(3, self.spaceFunc, lambda k, v: k % 2)
+        # c = pymake.util.LRUCache(3, self.spaceFunc, lambda k, v: k % 2)
+        c = pymake.util.MostUsedCache(3, self.spaceFunc, lambda k, v: k % 2)
         self.assertEqual(tuple(c.debugitems()), ())
 
         for i in range(0, len(self.expected)):
@@ -73,6 +77,7 @@ class LRUTest(unittest.TestCase):
             goti = tuple(c.debugitems())
             self.assertEqual(goti, di,
                              "debugitems, iteration %i, got %r expected %r" % (i, goti, di))
+
 
 class EqualityTest(unittest.TestCase):
     def test_string_expansion(self):

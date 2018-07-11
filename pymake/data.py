@@ -7,47 +7,35 @@ import os
 import re
 import sys
 from functools import reduce
+from io import StringIO
 
-try:
-    import parserdata, parser, functions, process, util, implicit
-    import globrelative
-    from pymake import errors
-except ModuleNotFoundError:
-    from . import parserdata, parser, functions, process, util, implicit
-    from . import globrelative
-    from . import errors
-
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from io import StringIO
-
-
-if sys.version_info[0] < 3:
-    str_type = basestring
-else:
-    str_type = str
+from . import errors
+from . import globrelative
+from . import parserdata, parser, functions, process, util, implicit
 
 _log = logging.getLogger('pymake.data')
 
-def withoutdups(it):
+
+def without_duplicates(it):
     r = set()
     for i in it:
-        if not i in r:
+        if i not in r:
             r.add(i)
             yield i
 
-def mtimeislater(deptime, targettime):
+
+def modification_time_is_later(dependency_time, target_time):
     """
-    Is the mtime of the dependency later than the target?
+    Is the modification time of the dependency later than the target?
     """
 
-    if deptime is None:
+    if dependency_time is None:
         return True
-    if targettime is None:
+    if target_time is None:
         return False
     # int(1000*x) because of http://bugs.python.org/issue10148
-    return int(1000 * deptime) > int(1000 * targettime)
+    return int(1000 * dependency_time) > int(1000 * target_time)
+
 
 def getmtime(path):
     try:
@@ -56,18 +44,22 @@ def getmtime(path):
     except OSError:
         return None
 
-def stripdotslash(s):
+
+def strip_dot_slash(s):
     if s.startswith('./'):
         st = s[2:]
         return st if st != '' else '.'
     return s
 
-def stripdotslashes(sl):
-    for s in sl:
-        yield stripdotslash(s)
 
-def getindent(stack):
+def strip_dot_slashes(sl):
+    for s in sl:
+        yield strip_dot_slash(s)
+
+
+def get_indent(stack):
     return ''.ljust(len(stack) - 1)
+
 
 def _if_else(c, t, f):
     if c:
@@ -153,17 +145,19 @@ class StringExpansion(BaseExpansion):
     simple = True
 
     def __init__(self, s, loc):
-        assert isinstance(s, str_type)
+        assert isinstance(s, str)
         self.s = s
         self.loc = loc
 
+    # noinspection SpellCheckingInspection
     def lstrip(self):
         self.s = self.s.lstrip()
 
+    # noinspection SpellCheckingInspection
     def rstrip(self):
         self.s = self.s.rstrip()
 
-    def isempty(self):
+    def is_empty(self):
         return self.s == ''
 
     def resolve(self, i, j, fd, k=None):
@@ -224,6 +218,7 @@ class Expansion(BaseExpansion, list):
     __slots__ = ('loc',)
     simple = False
 
+    # noinspection PyMissingConstructor
     def __init__(self, loc=None):
         # A list of (element, isfunc) tuples
         # element is either a string or a function
@@ -239,7 +234,7 @@ class Expansion(BaseExpansion, list):
         return e
 
     def appendstr(self, s):
-        assert isinstance(s, str_type)
+        assert isinstance(s, str)
         if s == '':
             return
 
@@ -256,7 +251,7 @@ class Expansion(BaseExpansion, list):
         else:
             self.extend(o)
 
-    def isempty(self):
+    def is_empty(self):
         return (not len(self)) or self[0] == ('', False)
 
     def lstrip(self):
@@ -316,7 +311,7 @@ class Expansion(BaseExpansion, list):
 
         return self
 
-    def resolve(self, makefile, variables, fd, setting=[]):
+    def resolve(self, makefile, variables, fd, setting: list = None):
         """
         Resolve this variable into a value, by interpolating the value
         of other variables.
@@ -329,19 +324,26 @@ class Expansion(BaseExpansion, list):
         assert isinstance(variables, Variables)
         assert isinstance(setting, list)
 
+        if setting is None:
+            setting = []
+
         for e, isfunc in self:
             if isfunc:
                 e.resolve(makefile, variables, fd, setting)
             else:
-                assert isinstance(e, str_type)
+                assert isinstance(e, str)
                 fd.write(e)
 
-    def resolvestr(self, makefile, variables, setting=[]):
+    def resolvestr(self, makefile, variables, setting: list = None):
+        if setting is None:
+            setting = []
         fd = StringIO()
         self.resolve(makefile, variables, fd, setting)
         return fd.getvalue()
 
-    def resolvesplit(self, makefile, variables, setting=[]):
+    def resolvesplit(self, makefile, variables, setting: list = None):
+        if setting is None:
+            setting = []
         return self.resolvestr(makefile, variables, setting).split()
 
     @property
@@ -429,6 +431,7 @@ class Expansion(BaseExpansion, list):
     def __ne__(self, other):
         return not self.__eq__(other)
 
+
 class Variables(object):
     """
     A mapping from variable names to variables. Variables have flavor, source, and value. The value is an
@@ -449,7 +452,7 @@ class Variables(object):
     SOURCE_IMPLICIT = 5
 
     def __init__(self, parent=None):
-        self._map = {} # vname -> flavor, source, valuestr, valueexp
+        self._map = {}  # vname -> flavor, source, valuestr, valueexp
         self.parent = parent
 
     def readfromenvironment(self, env):
@@ -469,7 +472,7 @@ class Variables(object):
         if flavor is not None:
             if expand and flavor != self.FLAVOR_SIMPLE and valueexp is None:
                 d = parser.Data.fromstring(valuestr, parserdata.Location("Expansion of variables '%s'" % (name,), 1, 0))
-                valueexp, t, o = parser.parsemakesyntax(d, 0, (), parser.iterdata)
+                valueexp, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
                 self._map[name] = flavor, source, valuestr, valueexp
 
             if flavor == self.FLAVOR_APPEND:
@@ -512,8 +515,9 @@ class Variables(object):
 
     def set(self, name, flavor, source, value, force=False):
         assert flavor in (self.FLAVOR_RECURSIVE, self.FLAVOR_SIMPLE)
-        assert source in (self.SOURCE_OVERRIDE, self.SOURCE_COMMANDLINE, self.SOURCE_MAKEFILE, self.SOURCE_ENVIRONMENT, self.SOURCE_AUTOMATIC, self.SOURCE_IMPLICIT)
-        assert isinstance(value, str_type), "expected str, got %s" % type(value)
+        assert source in (self.SOURCE_OVERRIDE, self.SOURCE_COMMANDLINE, self.SOURCE_MAKEFILE, self.SOURCE_ENVIRONMENT,
+                          self.SOURCE_AUTOMATIC, self.SOURCE_IMPLICIT)
+        assert isinstance(value, str), "expected str, got %s" % type(value)
 
         prevflavor, prevsource, prevvalue = self.get(name)
         if prevsource is not None and source > prevsource and not force:
@@ -525,7 +529,7 @@ class Variables(object):
 
     def append(self, name, source, value, variables, makefile):
         assert source in (self.SOURCE_OVERRIDE, self.SOURCE_MAKEFILE, self.SOURCE_AUTOMATIC)
-        assert isinstance(value, str_type)
+        assert isinstance(value, str)
 
         if name not in self._map:
             self._map[name] = self.FLAVOR_APPEND, source, value, None
@@ -538,7 +542,7 @@ class Variables(object):
 
         if prevflavor == self.FLAVOR_SIMPLE:
             d = parser.Data.fromstring(value, parserdata.Location("Expansion of variables '%s'" % (name,), 1, 0))
-            valueexp, t, o = parser.parsemakesyntax(d, 0, (), parser.iterdata)
+            valueexp, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
 
             val = valueexp.resolvestr(makefile, variables, [name])
             self._map[name] = prevflavor, prevsource, prevvalue + ' ' + val, None
@@ -559,6 +563,7 @@ class Variables(object):
     def __contains__(self, item):
         return item in self._map
 
+
 class Pattern(object):
     """
     A pattern is a string, possibly with a % substitution character. From the GNU make manual:
@@ -574,7 +579,7 @@ class Pattern(object):
     This insane behavior probably doesn't matter, but we're compatible just for shits and giggles.
     """
 
-    __slots__ = ('data')
+    __slots__ = 'data'
 
     def __init__(self, s):
         r = []
@@ -593,7 +598,7 @@ class Pattern(object):
                 else:
                     r.append(c)
             elif c == '%':
-                self.data = (''.join(r), s[i+1:])
+                self.data = (''.join(r), s[i + 1:])
                 return
             else:
                 r.append(c)
@@ -604,7 +609,7 @@ class Pattern(object):
         self.data = (''.join(r),)
 
     def ismatchany(self):
-        return self.data == ('','')
+        return self.data == ('', '')
 
     def ispattern(self):
         return len(self.data) == 2
@@ -635,7 +640,10 @@ class Pattern(object):
             if word == d[0]:
                 return word
             return None
+        elif len(d) != 2:
+            raise ValueError(d)
 
+        # noinspection PyTupleAssignmentBalance
         d0, d1 = d
         l1 = len(d0)
         l2 = len(d1)
@@ -659,7 +667,7 @@ class Pattern(object):
         @param mustmatch If true and this pattern doesn't match the word, throw a DataError. Otherwise
                          return word unchanged.
         """
-        assert isinstance(replacement, str_type)
+        assert isinstance(replacement, str)
 
         stem = self.match(word)
         if stem is None:
@@ -677,11 +685,13 @@ class Pattern(object):
         return "<Pattern with data %r>" % (self.data,)
 
     _backre = re.compile(r'[%\\]')
+
     def __str__(self):
         if not self.ispattern():
             return self._backre.sub(r'\\\1', self.data[0])
 
         return self._backre.sub(r'\\\1', self.data[0]) + '%' + self.data[1]
+
 
 class RemakeTargetSerially(object):
     __slots__ = ('target', 'makefile', 'indent', 'rlist')
@@ -727,6 +737,7 @@ class RemakeTargetSerially(object):
             self.target.notifydone(self.makefile)
         else:
             self.rlist[0].resolvedeps(True, self.resolvecb)
+
 
 class RemakeTargetParallel(object):
     __slots__ = ('target', 'makefile', 'indent', 'rlist', 'rulesremaining', 'currunning')
@@ -799,6 +810,7 @@ class RemakeTargetParallel(object):
         self.currunning = False
         self.runnext()
 
+
 class RemakeRuleContext(object):
     def __init__(self, target, makefile, rule, deps,
                  targetstack, avoidremakeloop):
@@ -842,7 +854,8 @@ class RemakeRuleContext(object):
         if len(self.resolvelist):
             dep, weak = self.resolvelist.pop(0)
             self.makefile.context.defer(dep.make,
-                                        self.makefile, self.targetstack, weak and self._weakdepfinishedserial or self._depfinishedserial)
+                                        self.makefile, self.targetstack,
+                                        weak and self._weakdepfinishedserial or self._depfinishedserial)
         else:
             self.resolvecb(error=self.error, didanything=self.didanything)
 
@@ -913,11 +926,12 @@ class RemakeRuleContext(object):
                 self.target.beingremade()
             else:
                 for d, weak in self.deps:
-                    if mtimeislater(d.mtime, self.target.mtime):
+                    if modification_time_is_later(d.mtime, self.target.mtime):
                         if d.mtime is None:
                             self.target.beingremade()
                         else:
-                            _log.info("%sNot remaking %s ubecause it would have no effect, even though %s is newer.", indent, self.target.target, d.target)
+                            _log.info("%sNot remaking %s ubecause it would have no effect, even though %s is newer.",
+                                      indent, self.target.target, d.target)
                         break
             cb(error=False)
             return
@@ -925,28 +939,35 @@ class RemakeRuleContext(object):
         if self.rule.doublecolon:
             if len(self.deps) == 0:
                 if self.avoidremakeloop:
-                    _log.info("%sNot remaking %s using rule at %s because it would introduce an infinite loop.", indent, self.target.target, self.rule.loc)
+                    _log.info("%sNot remaking %s using rule at %s because it would introduce an infinite loop.", indent,
+                              self.target.target, self.rule.loc)
                     cb(error=False)
                     return
 
         remake = self.remake
         if remake:
-            _log.info("%sRemaking %s using rule at %s: weak dependency was not found.", indent, self.target.target, self.rule.loc)
+            _log.info("%sRemaking %s using rule at %s: weak dependency was not found.", indent, self.target.target,
+                      self.rule.loc)
         else:
             if self.target.mtime is None:
                 remake = True
-                _log.info("%sRemaking %s using rule at %s: target doesn't exist or is a forced target", indent, self.target.target, self.rule.loc)
+                _log.info("%sRemaking %s using rule at %s: target doesn't exist or is a forced target", indent,
+                          self.target.target, self.rule.loc)
 
         if not remake:
             if self.rule.doublecolon:
                 if len(self.deps) == 0:
-                    _log.info("%sRemaking %s using rule at %s because there are no prerequisites listed for a double-colon rule.", indent, self.target.target, self.rule.loc)
+                    _log.info(
+                        ("%sRemaking %s using rule at %s because there are"
+                         " no prerequisites listed for a double-colon rule."),
+                        indent, self.target.target, self.rule.loc)
                     remake = True
 
         if not remake:
             for d, weak in self.deps:
-                if mtimeislater(d.mtime, self.target.mtime):
-                    _log.info("%sRemaking %s using rule at %s because %s is newer.", indent, self.target.target, self.rule.loc, d.target)
+                if modification_time_is_later(d.mtime, self.target.mtime):
+                    _log.info("%sRemaking %s using rule at %s because %s is newer.", indent, self.target.target,
+                              self.rule.loc, d.target)
                     remake = True
                     break
 
@@ -965,9 +986,11 @@ class RemakeRuleContext(object):
         else:
             cb(error=False)
 
+
 MAKESTATE_NONE = 0
 MAKESTATE_FINISHED = 1
 MAKESTATE_WORKING = 2
+
 
 class Target(object):
     """
@@ -983,7 +1006,7 @@ class Target(object):
     wasremade = False
 
     def __init__(self, target, makefile):
-        assert isinstance(target, str_type)
+        assert isinstance(target, str)
         self.target = target
         self.vpathtarget = None
         self.rules = []
@@ -994,7 +1017,9 @@ class Target(object):
     def addrule(self, rule):
         assert isinstance(rule, (Rule, PatternRuleInstance))
         if len(self.rules) and rule.doublecolon != self.rules[0].doublecolon:
-            raise errors.DataError("Cannot have single- and double-colon rules for the same target. Prior rule location: %s" % self.rules[0].loc, rule.loc)
+            raise errors.DataError(
+                "Cannot have single- and double-colon rules for the same target. Prior rule location: %s" % self.rules[
+                    0].loc, rule.loc)
 
         if isinstance(rule, PatternRuleInstance):
             if len(rule.prule.targetpatterns) != 1:
@@ -1024,16 +1049,16 @@ class Target(object):
         """
         # The steps in the GNU make manual Implicit-Rule-Search.html are very detailed. I hope they can be trusted.
 
-        indent = getindent(targetstack)
+        indent = get_indent(targetstack)
 
         _log.info("%sSearching for implicit rule to make '%s'", indent, self.target)
 
         dir, s, file = util.strrpartition(self.target, '/')
         dir = dir + s
 
-        candidates = [] # list of PatternRuleInstance
+        candidates = []  # list of PatternRuleInstance
 
-        hasmatch = util.any((r.hasspecificmatch(file) for r in makefile.implicitrules))
+        hasmatch = any((r.hasspecificmatch(file) for r in makefile.implicitrules))
 
         for r in makefile.implicitrules:
             if r in rulestack:
@@ -1059,7 +1084,9 @@ class Target(object):
 
             if depfailed is not None:
                 if r.doublecolon:
-                    _log.info("%s Terminal rule at %s doesn't match: prerequisite '%s' not mentioned and doesn't exist.", indent, r.loc, depfailed)
+                    _log.info(
+                        "%s Terminal rule at %s doesn't match: prerequisite '%s' not mentioned and doesn't exist.",
+                        indent, r.loc, depfailed)
                 else:
                     newcandidates.append(r)
                 continue
@@ -1116,11 +1143,11 @@ class Target(object):
 
         if self.target in targetstack:
             raise errors.ResolutionError("Recursive dependency: %s -> %s" % (
-                    " -> ".join(targetstack), self.target))
+                " -> ".join(targetstack), self.target))
 
-        targetstack = targetstack + [self.target]
+        targetstack += [self.target]
 
-        indent = getindent(targetstack)
+        indent = get_indent(targetstack)
 
         _log.info("%sConsidering target '%s'", indent, self.target)
 
@@ -1142,10 +1169,10 @@ class Target(object):
         # depend on it are always out of date. This is like .FORCE but more
         # compatible with other makes.
         # Otherwise, we don't know how to make it.
-        if not len(self.rules) and self.mtime is None and not util.any((len(rule.prerequisites) > 0
-                                                                        for rule in self.rules)):
+        if not len(self.rules) and self.mtime is None and not any((len(rule.prerequisites) > 0
+                                                                   for rule in self.rules)):
             raise errors.ResolutionError("No rule to make target '%s' needed by %r" % (self.target,
-                                                                                targetstack))
+                                                                                       targetstack))
 
         if recursive:
             for r in self.rules:
@@ -1173,7 +1200,7 @@ class Target(object):
             stem = self.target[2:]
             f, s, e = makefile.variables.get('.LIBPATTERNS')
             if e is not None:
-                libpatterns = [Pattern(stripdotslash(s)) for s in e.resolvesplit(makefile, makefile.variables)]
+                libpatterns = [Pattern(strip_dot_slash(s)) for s in e.resolvesplit(makefile, makefile.variables)]
                 if len(libpatterns):
                     searchdirs = ['']
                     searchdirs.extend(makefile.getvpath(self.target))
@@ -1219,7 +1246,7 @@ class Target(object):
         for t in locs:
             fspath = util.normaljoin(makefile.workdir, t).replace('\\', '/')
             mtime = getmtime(fspath)
-#            _log.info("Searching %s ... checking %s ... mtime %r" % (t, fspath, mtime))
+            #            _log.info("Searching %s ... checking %s ... mtime %r" % (t, fspath, mtime))
             if mtime is not None:
                 return (t, mtime)
 
@@ -1285,7 +1312,7 @@ class Target(object):
         self.error = False
         self.didanything = False
 
-        indent = getindent(targetstack)
+        indent = get_indent(targetstack)
 
         try:
             self.resolvedeps(makefile, targetstack, [], False)
@@ -1302,7 +1329,8 @@ class Target(object):
             return
 
         if self.isdoublecolon():
-            rulelist = [RemakeRuleContext(self, makefile, r, [(makefile.gettarget(p), False) for p in r.prerequisites], targetstack, avoidremakeloop) for r in self.rules]
+            rulelist = [RemakeRuleContext(self, makefile, r, [(makefile.gettarget(p), False) for p in r.prerequisites],
+                                          targetstack, avoidremakeloop) for r in self.rules]
         else:
             alldeps = []
 
@@ -1320,12 +1348,13 @@ class Target(object):
 
             rulelist = [RemakeRuleContext(self, makefile, commandrule, alldeps, targetstack, avoidremakeloop)]
 
-        targetstack = targetstack + [self.target]
+        targetstack += [self.target]
 
         if serial:
             RemakeTargetSerially(self, makefile, indent, rulelist)
         else:
             RemakeTargetParallel(self, makefile, indent, rulelist)
+
 
 def dirpart(p):
     d, s, f = util.strrpartition(p, '/')
@@ -1334,28 +1363,32 @@ def dirpart(p):
 
     return d
 
+
 def filepart(p):
     d, s, f = util.strrpartition(p, '/')
     return f
+
 
 def setautomatic(v, name, plist):
     v.set(name, Variables.FLAVOR_SIMPLE, Variables.SOURCE_AUTOMATIC, ' '.join(plist))
     v.set(name + 'D', Variables.FLAVOR_SIMPLE, Variables.SOURCE_AUTOMATIC, ' '.join((dirpart(p) for p in plist)))
     v.set(name + 'F', Variables.FLAVOR_SIMPLE, Variables.SOURCE_AUTOMATIC, ' '.join((filepart(p) for p in plist)))
 
+
 def setautomaticvariables(v, makefile, target, prerequisites):
     prtargets = [makefile.gettarget(p) for p in prerequisites]
     prall = [pt.vpathtarget for pt in prtargets]
-    proutofdate = [pt.vpathtarget for pt in withoutdups(prtargets)
-                   if target.mtime is None or mtimeislater(pt.mtime, target.mtime)]
+    proutofdate = [pt.vpathtarget for pt in without_duplicates(prtargets)
+                   if target.mtime is None or modification_time_is_later(pt.mtime, target.mtime)]
 
     setautomatic(v, '@', [target.vpathtarget])
     if len(prall):
         setautomatic(v, '<', [prall[0]])
 
     setautomatic(v, '?', proutofdate)
-    setautomatic(v, '^', list(withoutdups(prall)))
+    setautomatic(v, '^', list(without_duplicates(prall)))
     setautomatic(v, '+', prall)
+
 
 def splitcommand(command):
     """
@@ -1378,6 +1411,7 @@ def splitcommand(command):
     if i > start:
         yield command[start:i]
 
+
 def findmodifiers(command):
     """
     Find any of +-@% prefixed on the command.
@@ -1392,6 +1426,7 @@ def findmodifiers(command):
     realcommand = command.lstrip(' \t\n@+-%')
     modset = set(command[:-len(realcommand)])
     return realcommand, '@' in modset, '+' in modset, '-' in modset, '%' in modset
+
 
 class _CommandWrapper(object):
     def __init__(self, cline, ignoreErrors, loc, context, **kwargs):
@@ -1412,6 +1447,7 @@ class _CommandWrapper(object):
         self.usercb = cb
         process.call(self.cline, loc=self.loc, cb=self._cb, context=self.context, **self.kwargs)
 
+
 class _NativeWrapper(_CommandWrapper):
     def __init__(self, cline, ignoreErrors, loc, context,
                  pycommandpath, **kwargs):
@@ -1427,7 +1463,8 @@ class _NativeWrapper(_CommandWrapper):
         # get the module and method to call
         parts, badchar = process.clinetoargv(self.cline, self.kwargs['cwd'])
         if parts is None:
-            raise errors.DataError("native command '%s': shell metacharacter '%s' in command line" % (self.cline, badchar), self.loc)
+            raise errors.DataError(
+                "native command '%s': shell metacharacter '%s' in command line" % (self.cline, badchar), self.loc)
         if len(parts) < 2:
             raise errors.DataError("native command '%s': no method name specified" % self.cline, self.loc)
         module = parts[0]
@@ -1437,6 +1474,7 @@ class _NativeWrapper(_CommandWrapper):
         process.call_native(module, method, cline_list,
                             loc=self.loc, cb=self._cb, context=self.context,
                             pycommandpath=self.pycommandpath, **self.kwargs)
+
 
 def getcommandsforrule(rule, target, makefile, prerequisites, stem):
     v = Variables(parent=target.variables)
@@ -1455,7 +1493,8 @@ def getcommandsforrule(rule, target, makefile, prerequisites, stem):
             else:
                 echo = "%s$ %s" % (c.loc, cline)
             if not isNative:
-                yield _CommandWrapper(cline, ignoreErrors=ignoreErrors, env=env, cwd=makefile.workdir, loc=c.loc, context=makefile.context,
+                yield _CommandWrapper(cline, ignoreErrors=ignoreErrors, env=env, cwd=makefile.workdir, loc=c.loc,
+                                      context=makefile.context,
                                       echo=echo, justprint=makefile.justprint)
             else:
                 f, s, e = v.get("PYCOMMANDPATH", True)
@@ -1466,6 +1505,7 @@ def getcommandsforrule(rule, target, makefile, prerequisites, stem):
                                      loc=c.loc, context=makefile.context,
                                      echo=echo, justprint=makefile.justprint,
                                      pycommandpath=e)
+
 
 class Rule(object):
     """
@@ -1502,6 +1542,7 @@ class Rule(object):
         return getcommandsforrule(self, target, makefile, prereqs, stem=None)
         # TODO: $* in non-pattern rules?
 
+
 class PatternRuleInstance(object):
     weakdeps = False
 
@@ -1509,6 +1550,7 @@ class PatternRuleInstance(object):
     A pattern rule instantiated for a particular target. It has the same API as Rule, but
     different internals, forwarding most information on to the PatternRule.
     """
+
     def __init__(self, prule, dir, stem, ismatchany):
         assert isinstance(prule, PatternRule)
 
@@ -1531,6 +1573,7 @@ class PatternRuleInstance(object):
                                                                                     self.ismatchany,
                                                                                     self.doublecolon)
 
+
 class PatternRule(object):
     """
     An implicit rule or static pattern rule containing target patterns, prerequisite patterns,
@@ -1549,7 +1592,7 @@ class PatternRule(object):
         self.commands.append(c)
 
     def ismatchany(self):
-        return util.any((t.ismatchany() for t in self.targetpatterns))
+        return any((t.ismatchany() for t in self.targetpatterns))
 
     def hasspecificmatch(self, file):
         for p in self.targetpatterns:
@@ -1583,6 +1626,7 @@ class PatternRule(object):
     def prerequisitesforstem(self, dir, stem):
         return [p.resolve(dir, stem) for p in self.prerequisites]
 
+
 class _RemakeContext(object):
     def __init__(self, makefile, cb):
         self.makefile = makefile
@@ -1614,10 +1658,12 @@ class _RemakeContext(object):
                     self.cb(remade=True)
                     return
                 elif required and t.mtime is None:
-                    self.cb(remade=False, error=errors.DataError("No rule to remake missing include file %s" % t.target))
+                    self.cb(remade=False,
+                            error=errors.DataError("No rule to remake missing include file %s" % t.target))
                     return
 
             self.cb(remade=False)
+
 
 class Makefile(object):
     """
@@ -1644,18 +1690,18 @@ class Makefile(object):
         self.keepgoing = keepgoing
         self.silent = silent
         self.justprint = justprint
-        self._patternvariables = [] # of (pattern, variables)
+        self._patternvariables = []  # of (pattern, variables)
         self.implicitrules = []
         self.parsingfinished = False
 
-        self._patternvpaths = [] # of (pattern, [dir, ...])
+        self._patternvpaths = []  # of (pattern, [dir, ...])
 
         if workdir is None:
             workdir = os.getcwd()
         workdir = os.path.realpath(workdir)
         self.workdir = workdir
         self.variables.set('CURDIR', Variables.FLAVOR_SIMPLE,
-                           Variables.SOURCE_AUTOMATIC, workdir.replace('\\','/'))
+                           Variables.SOURCE_AUTOMATIC, workdir.replace('\\', '/'))
 
         # the list of included makefiles, whether or not they existed
         self.included = []
@@ -1713,7 +1759,7 @@ class Makefile(object):
                 return v
 
         v = Variables()
-        self._patternvariables.append( (pattern, v) )
+        self._patternvariables.append((pattern, v))
         return v
 
     def getpatternvariablesfor(self, target):
@@ -1725,8 +1771,9 @@ class Makefile(object):
         return target in self._targets
 
     _globcheck = re.compile('[\[*?]')
+
     def gettarget(self, target):
-        assert isinstance(target, str_type)
+        assert isinstance(target, str)
 
         target = target.rstrip('/')
 
@@ -1762,7 +1809,7 @@ class Makefile(object):
             self._vpath = []
         else:
             self._vpath = [e for e in re.split('[%s\s]+' % os.pathsep,
-                                          value.resolvestr(self, self.variables, ['VPATH'])) if e != '']
+                                               value.resolvestr(self, self.variables, ['VPATH'])) if e != '']
 
         # Must materialize target values because
         # gettarget() modifies self._targets.
@@ -1826,7 +1873,7 @@ class Makefile(object):
             if p.match(target):
                 vp.extend(dirs)
 
-        return withoutdups(vp)
+        return without_duplicates(vp)
 
     def remakemakefiles(self, cb):
         mlist = []

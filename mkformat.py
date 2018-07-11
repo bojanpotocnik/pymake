@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 
 import sys
-import pymake.parser
+
+from . import pymake
 
 filename = sys.argv[1]
-source = None
 
 with open(filename, 'rU') as fh:
     source = fh.read()

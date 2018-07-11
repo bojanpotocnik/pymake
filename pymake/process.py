@@ -16,22 +16,20 @@ import sys
 import traceback
 from collections import deque
 
+from . import command, util
+from . import errors
+
+if sys.platform == 'win32':
+    # noinspection PyUnresolvedReferences
+    from . import win32process
+
 # XXXkhuey Work around http://bugs.python.org/issue1731717
 subprocess._cleanup = lambda: None
-try:
-    import command, util
-    from pymake import errors
-    if sys.platform == 'win32':
-        import win32process
-except ModuleNotFoundError:
-    from . import command, util
-    from . import errors
-    if sys.platform == 'win32':
-        from . import win32process
 
 _log = logging.getLogger('pymake.process')
 
 _escapednewlines = re.compile(r'\\\n')
+
 
 def tokens2re(tokens):
     # Create a pattern for non-escaped tokens, in the form:
@@ -46,33 +44,38 @@ def tokens2re(tokens):
     nonescaped = r'(?<!\\)(?:%s)' % '|'.join('(?P<%s>%s)' % (name, value) for name, value in tokens.items())
     # The final pattern matches either the above pattern, or an escaped
     # backslash, captured in the "escape" match group.
-    return re.compile('(?:%s|%s)' % (nonescaped, r'(?P<escape>\\\\)'))
+    return re.compile('(?:{}|{})'.format(nonescaped, r'(?P<escape>\\\\)'))
+
 
 _unquoted_tokens = tokens2re({
-  'whitespace': r'[\t\r\n ]+',
-  'quote': r'[\'"]',
-  'comment': '#',
-  'special': r'[<>&|`~(){}$;]',
-  'backslashed': r'\\[^\\]',
-  'glob': r'[\*\?]',
+    'whitespace': r'[\t\r\n ]+',
+    'quote': r'[\'"]',
+    'comment': '#',
+    'special': r'[<>&|`~(){}$;]',
+    'backslashed': r'\\[^\\]',
+    'glob': r'[\*\?]',
 })
 
 _doubly_quoted_tokens = tokens2re({
-  'quote': '"',
-  'backslashedquote': r'\\"',
-  'special': '\$',
-  'backslashed': r'\\[^\\"]',
+    'quote': '"',
+    'backslashedquote': r'\\"',
+    'special': '\$',
+    'backslashed': r'\\[^\\"]',
 })
+
 
 class MetaCharacterException(Exception):
     def __init__(self, char):
         self.char = char
+
 
 class ClineSplitter(list):
     """
     Parses a given command line string and creates a list of command
     and arguments, with wildcard expansion.
     """
+
+    # noinspection PyMissingConstructor
     def __init__(self, cline, cwd):
         self.cwd = cwd
         self.arg = None
@@ -106,7 +109,7 @@ class ClineSplitter(list):
                 # used.
                 self.append(self.arg)
             else:
-                self.extend(f[len(path)-len(self.arg):] for f in globbed)
+                self.extend(f[len(path) - len(self.arg):] for f in globbed)
             self.glob = False
         else:
             self.append(self.arg)
@@ -170,7 +173,7 @@ class ClineSplitter(list):
         if index == -1:
             raise Exception('Unterminated quoted string in command')
         self._push(self.cline[:index])
-        self.cline = self.cline[index+1:]
+        self.cline = self.cline[index + 1:]
 
     def _parse_doubly_quoted(self):
         if not self.cline:
@@ -201,6 +204,7 @@ class ClineSplitter(list):
                 # Backslashed characters are kept backslashed
                 self._push(match['backslashed'])
 
+
 def clinetoargv(cline, cwd):
     """
     If this command line can safely skip the shell, return an argv array.
@@ -217,6 +221,7 @@ def clinetoargv(cline, cwd):
 
     return args, None
 
+
 # shellwords contains a set of shell builtin commands that need to be
 # executed within a shell. It also contains a set of commands that are known
 # to be giving problems when run directly instead of through the msys shell.
@@ -228,6 +233,7 @@ shellwords = (':', '.', 'break', 'cd', 'continue', 'exec', 'exit', 'export',
               'printf', 'read', 'shopt', 'source', 'type', 'typeset',
               'ulimit', 'unalias', 'set', 'find')
 
+
 def prepare_command(cline, cwd, loc):
     """
     Returns a list of command and arguments for the given command line string.
@@ -235,8 +241,9 @@ def prepare_command(cline, cwd, loc):
     returned list contains the shell invocation.
     """
 
-    #TODO: call this once up-front somewhere and save the result?
+    # TODO: call this once up-front somewhere and save the result?
     shell, msys = util.checkmsyscompat()
+    argv = None
 
     shellreason = None
     executable = None
@@ -266,6 +273,7 @@ def prepare_command(cline, cwd, loc):
 
     return executable, argv
 
+
 def call(cline, env, cwd, loc, cb, context, echo, justprint=False):
     executable, argv = prepare_command(cline, cwd, loc)
 
@@ -273,22 +281,24 @@ def call(cline, env, cwd, loc, cb, context, echo, justprint=False):
         cb(res=0)
         return
 
-    if argv[0] == command.makepypath:
+    if argv[0] == command.make_py_path:
         command.main(argv[1:], env, cwd, cb)
         return
 
     if argv[0:2] == [sys.executable.replace('\\', '/'),
-                     command.makepypath.replace('\\', '/')]:
+                     command.make_py_path.replace('\\', '/')]:
         command.main(argv[2:], env, cwd, cb)
         return
 
     context.call(argv, executable=executable, shell=False, env=env, cwd=cwd, cb=cb,
                  echo=echo, justprint=justprint)
 
+
 def call_native(module, method, argv, env, cwd, loc, cb, context, echo, justprint=False,
                 pycommandpath=None):
     context.call_native(module, method, argv, env=env, cwd=cwd, cb=cb,
                         echo=echo, justprint=justprint, pycommandpath=pycommandpath)
+
 
 def statustoresult(status):
     """
@@ -298,13 +308,14 @@ def statustoresult(status):
     if sig:
         return -sig
 
-    return status >>8
+    return status >> 8
+
 
 class Job(object):
     """
     A single job to be executed on the process pool.
     """
-    done = False # set to true when the job completes
+    done = False  # set to true when the job completes
 
     def __init__(self):
         self.exitcode = -127
@@ -319,10 +330,12 @@ class Job(object):
     def get_callback(self, condition):
         return lambda result: self.notify(condition, result)
 
+
 class PopenJob(Job):
     """
     A job that executes a command using subprocess.Popen.
     """
+
     def __init__(self, argv, executable, shell, env, cwd):
         Job.__init__(self)
         self.argv = argv
@@ -352,10 +365,13 @@ class PopenJob(Job):
         finally:
             os.environ['PATH'] = oldpath
 
+
 class PythonJob(Job):
     """
     A job that calls a Python method.
     """
+
+    # noinspection PyMissingConstructor
     def __init__(self, module, method, argv, env, cwd, pycommandpath=None):
         self.module = module
         self.method = method
@@ -374,6 +390,7 @@ class PythonJob(Job):
         # sys.path is adjusted for the entire lifetime of the command
         # execution. This ensures any delayed imports will still work.
         oldsyspath = list(sys.path)
+        # noinspection PyBroadException
         try:
             os.chdir(self.cwd)
             os.environ.clear()
@@ -399,17 +416,17 @@ class PythonJob(Job):
             rv = m.__dict__[self.method](self.argv)
             if rv != 0 and rv is not None:
                 print((
-                    "Native command '%s %s' returned value '%s'" %
-                    (self.module, self.method, rv)), file=sys.stderr)
+                        "Native command '%s %s' returned value '%s'" %
+                        (self.module, self.method, rv)), file=sys.stderr)
                 return (rv if isinstance(rv, int) else 1)
 
         except errors.PythonError as e:
             print(e, file=sys.stderr)
             return e.exitcode
-        except:
+        except Exception:
             e = sys.exc_info()[1]
             if isinstance(e, SystemExit) and (e.code == 0 or e.code is None):
-                pass # sys.exit(0) is not a failure
+                pass  # sys.exit(0) is not a failure
             else:
                 print(e, file=sys.stderr)
                 traceback.print_exc()
@@ -425,11 +442,13 @@ class PythonJob(Job):
 
         return 0
 
+
 def job_runner(job):
     """
     Run a job. Called in a Process pool.
     """
     return job.run()
+
 
 class ParallelContext(object):
     """
@@ -444,13 +463,14 @@ class ParallelContext(object):
         self.exit = False
 
         self.processpool = multiprocessing.Pool(processes=jcount)
-        self.pending = deque() # deque of (cb, args, kwargs)
-        self.running = [] # list of (subprocess, cb)
+        self.pending = deque()  # deque of (cb, args, kwargs)
+        self.running = []  # list of (subprocess, cb)
 
         self._allcontexts.add(self)
 
     def finish(self):
-        assert len(self.pending) == 0 and len(self.running) == 0, "pending: %i running: %i" % (len(self.pending), len(self.running))
+        assert len(self.pending) == 0 and len(self.running) == 0, "pending: %i running: %i" % (
+            len(self.pending), len(self.running))
         self.processpool.close()
         self.processpool.join()
         self._allcontexts.remove(self)
@@ -461,7 +481,9 @@ class ParallelContext(object):
             cb(*args, **kwargs)
 
     def defer(self, cb, *args, **kwargs):
-        assert self.jcount > 1 or not len(self.pending), "Serial execution error defering %r %r %r: currently pending %r" % (cb, args, kwargs, self.pending)
+        assert self.jcount > 1 or not len(
+            self.pending), "Serial execution error defering %r %r %r: currently pending %r" % (
+            cb, args, kwargs, self.pending)
         self.pending.append((cb, args, kwargs))
 
     def _docall_generic(self, pool, job, cb, echo, justprint):
@@ -493,7 +515,7 @@ class ParallelContext(object):
 
     @staticmethod
     def _waitany(condition):
-        def _checkdone():
+        def _checkdone() -> list:
             jobs = []
             for c in ParallelContext._allcontexts:
                 for i in range(0, len(c.running)):
@@ -511,7 +533,7 @@ class ParallelContext(object):
         condition.acquire()
         jobs = _checkdone()
 
-        if jobs == []:
+        if not jobs:
             condition.wait()
             jobs = _checkdone()
 
@@ -530,13 +552,14 @@ class ParallelContext(object):
             for c in clist:
                 c.run()
 
-            dowait = util.any((len(c.running) for c in ParallelContext._allcontexts))
+            dowait = any((len(c.running) for c in ParallelContext._allcontexts))
             if dowait:
                 # Wait on local jobs first for perf
                 for job, cb in ParallelContext._waitany(ParallelContext._condition):
                     cb(job.exitcode)
             else:
                 assert any(len(c.pending) for c in ParallelContext._allcontexts)
+
 
 def makedeferrable(usercb, **userkwargs):
     def cb(*args, **kwargs):
@@ -545,8 +568,10 @@ def makedeferrable(usercb, **userkwargs):
 
     return cb
 
+
 _serialContext = None
 _parallelContext = None
+
 
 def getcontext(jcount):
     global _serialContext, _parallelContext
@@ -558,4 +583,3 @@ def getcontext(jcount):
         if _parallelContext is None:
             _parallelContext = ParallelContext(jcount)
         return _parallelContext
-

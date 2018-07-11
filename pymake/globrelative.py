@@ -9,58 +9,60 @@ Filename globbing like the python glob module with minor differences:
 import fnmatch
 import os
 import re
+from pathlib import Path
+from typing import Union, List
 
-try:
-    import util
-except ModuleNotFoundError:
-    from . import util
+from . import util
 
-_globcheck = re.compile('[\[*?]')
+_glob_check = re.compile('[\[*?]')
 
-def hasglob(p):
-    return _globcheck.search(p) is not None
 
-def glob(fsdir, path):
+def has_glob(p: str) -> bool:
+    return _glob_check.search(p) is not None
+
+
+def glob(fs_dir: Union[str, Path], path: Union[str, Path]) -> List[str]:
     """
     Yield paths matching the path glob. Sorts as a bonus. Excludes '.' and '..'
     """
 
-    dir, leaf = os.path.split(path)
-    if dir == '':
-        return globpattern(fsdir, leaf)
+    directory, leaf = os.path.split(path)
+    if directory == '':
+        return glob_pattern(fs_dir, leaf)
 
-    if hasglob(dir):
-        dirsfound = glob(fsdir, dir)
+    if has_glob(directory):
+        dirs_found = glob(fs_dir, directory)
     else:
-        dirsfound = [dir]
+        dirs_found = [directory]
 
     r = []
 
-    for dir in dirsfound:
-        fspath = util.normaljoin(fsdir, dir)
+    for directory in dirs_found:
+        fspath = util.normaljoin(fs_dir, directory)
         if not os.path.isdir(fspath):
             continue
 
-        r.extend((util.normaljoin(dir, found) for found in globpattern(fspath, leaf)))
+        r.extend((util.normaljoin(directory, found) for found in glob_pattern(fspath, leaf)))
 
     return r
 
-def globpattern(dir, pattern):
+
+def glob_pattern(directory: Union[str, Path], pattern: str) -> List[str]:
     """
     Return leaf names in the specified directory which match the pattern.
     """
 
-    if not hasglob(pattern):
+    if not has_glob(pattern):
         if pattern == '':
-            if os.path.isdir(dir):
+            if os.path.isdir(directory):
                 return ['']
             return []
 
-        if os.path.exists(util.normaljoin(dir, pattern)):
+        if os.path.exists(util.normaljoin(directory, pattern)):
             return [pattern]
         return []
 
-    leaves = os.listdir(dir) + ['.', '..']
+    leaves = os.listdir(directory) + ['.', '..']
 
     # "hidden" filenames are a bit special
     if not pattern.startswith('.'):
@@ -68,7 +70,7 @@ def globpattern(dir, pattern):
                   if not leaf.startswith('.')]
 
     leaves = fnmatch.filter(leaves, pattern)
-    leaves = [l for l in leaves if os.path.exists(util.normaljoin(dir, l))]
+    leaves = [l for l in leaves if os.path.exists(util.normaljoin(directory, l))]
 
     leaves.sort()
     return leaves
