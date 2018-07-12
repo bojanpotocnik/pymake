@@ -9,7 +9,7 @@ import unittest
 
 from ..pymake.data import Expansion
 from ..pymake.data import StringExpansion
-from ..pymake.errors import SyntaxError
+from ..pymake.errors import MakeSyntaxError
 from ..pymake.functions import BasenameFunction
 from ..pymake.functions import SubstitutionRef
 from ..pymake.functions import VariableRef
@@ -270,7 +270,7 @@ class MakefileCorupusTest(TestBase):
 
             try:
                 yield (makefile, source, parsestring(source, makefile))
-            except SyntaxError:
+            except MakeSyntaxError:
                 continue
 
     def test_reparse_consistency(self):

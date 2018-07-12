@@ -494,14 +494,18 @@ class ParallelContext(object):
             cb, args, kwargs, self.pending)
         self.pending.append((cb, args, kwargs))
 
-    def _docall_generic(self, pool, job, cb, echo, justprint):
+    def _docall_generic(self, pool: Optional[multiprocessing.Pool], job, cb, echo, justprint):
         if echo is not None:
             print(echo)
         processcb = job.get_callback(ParallelContext._condition)
         if justprint:
             processcb(0)
         else:
-            pool.apply_async(job_runner, args=(job,), callback=processcb)
+            if pool:
+                pool.apply_async(job_runner, args=(job,), callback=processcb)
+            else:
+                ret = job_runner(job)
+                processcb(ret)
         self.running.append((job, cb))
 
     def call(self, argv, shell, env, cwd, cb, echo, justprint=False, executable=None):
@@ -525,7 +529,7 @@ class ParallelContext(object):
     def _waitany(condition):
         def _checkdone() -> list:
             jobs = []
-            for c in ParallelContext._allcontexts:
+            for c in ParallelContext._all_contexts:
                 for i in range(0, len(c.running)):
                     if c.running[i][0].done:
                         jobs.append(c.running[i])

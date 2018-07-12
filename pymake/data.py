@@ -1,13 +1,14 @@
 """
 A representation of makefile data structures.
 """
-
+import enum
 import logging
 import os
 import re
 import sys
 from functools import reduce
 from io import StringIO
+from typing import Tuple, Dict, Optional, Mapping, Union, Iterator, List
 
 from . import errors
 from . import globrelative
@@ -208,11 +209,11 @@ class StringExpansion(BaseExpansion):
 
 
 class Expansion(BaseExpansion, list):
-    """A representation of expanded data.
+    """
+    A representation of expanded data.
 
-    This is effectively an ordered list of StringExpansion and
-    pymake.function.Function instances. Every item in the collection appears in
-    the same context in a make file.
+    This is effectively an ordered list of StringExpansion and pymake.function.Function instances.
+    Every item in the collection appears in the same context in a make file.
     """
 
     __slots__ = ('loc',)
@@ -224,6 +225,9 @@ class Expansion(BaseExpansion, list):
         # element is either a string or a function
         self.loc = loc
 
+    def __iter__(self) -> Iterator[Tuple[Union[str, functions.Function], bool]]:
+        return super().__iter__()
+
     @staticmethod
     def fromstring(s, path):
         return StringExpansion(s, parserdata.Location(path, 1, 0))
@@ -233,15 +237,15 @@ class Expansion(BaseExpansion, list):
         e.extend(self)
         return e
 
-    def appendstr(self, s):
+    def appendstr(self, s: str):
         assert isinstance(s, str)
-        if s == '':
-            return
 
-        self.append((s, False))
+        if s:
+            self.append((s, False))
 
-    def appendfunc(self, func):
+    def appendfunc(self, func: functions.Function):
         assert isinstance(func, functions.Function)
+
         self.append((func, True))
 
     def concat(self, o):
@@ -311,14 +315,14 @@ class Expansion(BaseExpansion, list):
 
         return self
 
-    def resolve(self, makefile, variables, fd, setting: list = None):
+    def resolve(self, makefile: 'Makefile', variables: 'Variables', fd: StringIO, setting: List[str] = None) -> None:
         """
-        Resolve this variable into a value, by interpolating the value
-        of other variables.
+        Resolve this variable into a value, by interpolating the value of other variables.
 
-        @param setting (Variable instance) the variable currently
-               being set, if any. Setting variables must avoid self-referential
-               loops.
+        :param makefile:  Makefile.
+        :param variables: Existing variables.
+        :param fd:        String file object to which string expansion can be written to.
+        :param setting:   The variable currently being set, if any. Setting variables must avoid self-referential loops.
         """
         assert isinstance(makefile, Makefile)
         assert isinstance(variables, Variables)
@@ -327,21 +331,21 @@ class Expansion(BaseExpansion, list):
         if setting is None:
             setting = []
 
-        for e, isfunc in self:
-            if isfunc:
+        for e, is_func in self:
+            if is_func:
                 e.resolve(makefile, variables, fd, setting)
             else:
                 assert isinstance(e, str)
                 fd.write(e)
 
-    def resolvestr(self, makefile, variables, setting: list = None):
+    def resolvestr(self, makefile: 'Makefile', variables: 'Variables', setting: List[str] = None) -> str:
         if setting is None:
             setting = []
         fd = StringIO()
         self.resolve(makefile, variables, fd, setting)
         return fd.getvalue()
 
-    def resolvesplit(self, makefile, variables, setting: list = None):
+    def resolvesplit(self, makefile, variables, setting: List[str] = None):
         if setting is None:
             setting = []
         return self.resolvestr(makefile, variables, setting).split()
@@ -432,7 +436,7 @@ class Expansion(BaseExpansion, list):
         return not self.__eq__(other)
 
 
-class Variables(object):
+class Variables:
     """
     A mapping from variable names to variables. Variables have flavor, source, and value. The value is an
     expansion object.
@@ -440,128 +444,196 @@ class Variables(object):
 
     __slots__ = ('parent', '_map')
 
-    FLAVOR_RECURSIVE = 0
-    FLAVOR_SIMPLE = 1
-    FLAVOR_APPEND = 2
+    @enum.unique
+    class Flavor(enum.IntEnum):
+        RECURSIVE = 0
+        SIMPLE = 1
+        APPEND = 2
 
-    SOURCE_OVERRIDE = 0
-    SOURCE_COMMANDLINE = 1
-    SOURCE_MAKEFILE = 2
-    SOURCE_ENVIRONMENT = 3
-    SOURCE_AUTOMATIC = 4
-    SOURCE_IMPLICIT = 5
+        def __bool__(self) -> bool:
+            return True
 
-    def __init__(self, parent=None):
-        self._map = {}  # vname -> flavor, source, valuestr, valueexp
-        self.parent = parent
+    @enum.unique
+    class Source(enum.IntEnum):
+        """Sources of the variables. Values represent priorities (lower value means higher priority)."""
+        OVERRIDE = 0
+        COMMANDLINE = 1
+        MAKEFILE = 2
+        ENVIRONMENT = 3
+        AUTOMATIC = 4
+        IMPLICIT = 5
 
-    def readfromenvironment(self, env):
+        def __bool__(self) -> bool:
+            return True
+
+    def __init__(self, parent: 'Variables' = None):
+        self._map: Dict[str, Tuple[self.Flavor, self.Source, str, Optional[Union[Expansion, StringExpansion]]]] = {}
+        """vname -> flavor, source, valuestr, valueexp"""
+        self.parent: 'Variables' = parent
+
+    def read_from_environment(self, env: Mapping[str, str]) -> 'Variables':
+        """
+        Copy environment variables to the Makefile variables.
+
+        :param env: Mapping of the environment variables.
+        """
         for k, v in env.items():
-            self.set(k, self.FLAVOR_RECURSIVE, self.SOURCE_ENVIRONMENT, v)
+            self.set(k, self.Flavor.RECURSIVE, self.Source.ENVIRONMENT, v)
+        return self
 
-    def get(self, name, expand=True):
+    def from_statements(self, statements: parserdata.StatementList) -> 'Variables':
+        for stmt in statements:
+            if not isinstance(stmt, parserdata.SetVariable):
+                continue
+            # https://www.gnu.org/software/make/manual/html_node/Setting.html
+            if stmt.token == "+=":
+                self.append(stmt.name, stmt.source, stmt.value, self, None)
+            elif stmt.token in ("?=", ":=", "::=", "="):
+                flavor = self.Flavor.SIMPLE if (stmt.token in (":=", "::=")) else self.Flavor.RECURSIVE
+
+                if (stmt.token != "?=") or (stmt.name not in self):
+                    self.set(stmt.name, flavor, stmt.source, stmt.value)
+            else:
+                raise ValueError(f"Unknown token '{stmt.token}'")
+        return self
+
+    def get(self, name: str, expand: bool = True) \
+            -> Tuple[Optional[Flavor], Optional[Source], Optional[Union[str, Expansion, StringExpansion]]]:
         """
         Get the value of a named variable. Returns a tuple (flavor, source, value)
 
         If the variable is not present, returns (None, None, None)
 
-        @param expand If true, the value will be returned as an expansion. If false,
-        it will be returned as an unexpanded string.
+        :param name:   Variable name.
+        :param expand: If true, the value will be returned as an expansion.
+                       If false, it will be returned as an unexpanded string.
         """
-        flavor, source, valuestr, valueexp = self._map.get(name, (None, None, None, None))
+        flavor, source, value_str, value_exp = self._map.get(name, (None, None, None, None))
         if flavor is not None:
-            if expand and flavor != self.FLAVOR_SIMPLE and valueexp is None:
-                d = parser.Data.fromstring(valuestr, parserdata.Location("Expansion of variables '%s'" % (name,), 1, 0))
-                valueexp, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
-                self._map[name] = flavor, source, valuestr, valueexp
+            if expand and (flavor != self.Flavor.SIMPLE) and (value_exp is None):
+                d = parser.Data.fromstring(value_str, parserdata.Location(f"Expansion of variable '{name}'", 1, 0))
+                value_exp, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
+                self._map[name] = flavor, source, value_str, value_exp
 
-            if flavor == self.FLAVOR_APPEND:
+            if flavor == self.Flavor.APPEND:
                 if self.parent:
-                    pflavor, psource, pvalue = self.parent.get(name, expand)
+                    parent_flavor, parent_source, parent_value = self.parent.get(name, expand)
                 else:
-                    pflavor, psource, pvalue = None, None, None
+                    parent_flavor, parent_source, parent_value = None, None, None
 
-                if pvalue is None:
-                    flavor = self.FLAVOR_RECURSIVE
-                    # fall through
+                if parent_value is None:
+                    flavor = self.Flavor.RECURSIVE
+                    # Fall through
                 else:
-                    if source > psource:
+                    if source > parent_source:
                         # TODO: log a warning?
-                        return pflavor, psource, pvalue
+                        return parent_flavor, parent_source, parent_value
 
                     if not expand:
-                        return pflavor, psource, pvalue + ' ' + valuestr
+                        return parent_flavor, parent_source, parent_value + ' ' + value_str
 
-                    pvalue = pvalue.clone()
-                    pvalue.appendstr(' ')
-                    pvalue.concat(valueexp)
+                    parent_value = parent_value.clone()
+                    parent_value.appendstr(' ')
+                    parent_value.concat(value_exp)
 
-                    return pflavor, psource, pvalue
+                    return parent_flavor, parent_source, parent_value
 
             if not expand:
-                return flavor, source, valuestr
+                return flavor, source, value_str
 
-            if flavor == self.FLAVOR_RECURSIVE:
-                val = valueexp
+            if flavor == self.Flavor.RECURSIVE:
+                val = value_exp
             else:
-                val = Expansion.fromstring(valuestr, "Expansion of variable '%s'" % (name,))
+                val = Expansion.fromstring(value_str, f"Expansion of variable '{name}'")
 
             return flavor, source, val
 
         if self.parent is not None:
             return self.parent.get(name, expand)
 
-        return (None, None, None)
+        return None, None, None
 
-    def set(self, name, flavor, source, value, force=False):
-        assert flavor in (self.FLAVOR_RECURSIVE, self.FLAVOR_SIMPLE)
-        assert source in (self.SOURCE_OVERRIDE, self.SOURCE_COMMANDLINE, self.SOURCE_MAKEFILE, self.SOURCE_ENVIRONMENT,
-                          self.SOURCE_AUTOMATIC, self.SOURCE_IMPLICIT)
+    def set(self, name: str, flavor: Flavor, source: Source, value: str, *, force: bool = False) -> None:
+        """
+        Set variable data in the map of variables.
+        If the new variable source has higher priority (lower value) than the already existing variable (if any)
+        then the existing variable is automatically overwritten, otherwise `force` flag decides.
+
+        :param name:   Name of the variable.
+        :param flavor: Variable flavor.
+        :param source: Variable source.
+        :param value:  Value of the variable.
+        :param force:  Whether to forcibly overwrite existing variable (if any) even if the source priority
+                       of the new variable is lower than the one of the existing variable.
+        """
+        assert flavor in (self.Flavor.RECURSIVE, self.Flavor.SIMPLE)  # Flavor.APPEND is not allowed here.
+        # All sources are allowed.
         assert isinstance(value, str), "expected str, got %s" % type(value)
 
-        prevflavor, prevsource, prevvalue = self.get(name)
-        if prevsource is not None and source > prevsource and not force:
+        prev_flavor, prev_source, prev_value = self.get(name)
+        if (prev_source is not None) and (source > prev_source) and (not force):
             # TODO: give a location for this warning
-            _log.info("not setting variable '%s', set by higher-priority source to value '%s'" % (name, prevvalue))
+            _log.info(f"Not setting variable '{name}' (source {source}),"
+                      f" set by higher-priority source {prev_source} to value '{prev_value}'")
             return
 
         self._map[name] = flavor, source, value, None
 
-    def append(self, name, source, value, variables, makefile):
-        assert source in (self.SOURCE_OVERRIDE, self.SOURCE_MAKEFILE, self.SOURCE_AUTOMATIC)
+    def append(self, name: str, source: Source, value: str,
+               variables: Optional['Variables'], makefile: Optional['Makefile']) -> None:
+        """
+        Append variable value to already existing variable or create a new one if it doesnt exist.
+        If the appending variable source has lower priority than the already existing variable (if any) then
+        this action is ignored.
+
+        :param name:      Name of the variable.
+        :param source:    Variable source.
+        :param value:     Value of the variable.
+        :param variables: Existing variables.
+        :param makefile:  Makefile context.
+        """
+        assert source in (self.Source.OVERRIDE, self.Source.MAKEFILE, self.Source.AUTOMATIC)
         assert isinstance(value, str)
 
         if name not in self._map:
-            self._map[name] = self.FLAVOR_APPEND, source, value, None
+            self._map[name] = self.Flavor.APPEND, source, value, None
             return
 
-        prevflavor, prevsource, prevvalue, valueexp = self._map[name]
-        if source > prevsource:
-            # TODO: log a warning?
+        prev_flavor, prev_source, prev_value, prev_value_exp = self._map[name]
+        if source > prev_source:
+            _log.info(f"Not appending variable '{name}' (source {source}, value '{value}'),"
+                      f" set by higher-priority source {prev_source} to value '{prev_value}'")
             return
 
-        if prevflavor == self.FLAVOR_SIMPLE:
-            d = parser.Data.fromstring(value, parserdata.Location("Expansion of variables '%s'" % (name,), 1, 0))
-            valueexp, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
+        if prev_flavor == self.Flavor.SIMPLE:
+            d = parser.Data.fromstring(value, parserdata.Location(f"Expansion of variable '{name}'", 1, 0))
+            prev_value_exp, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
 
-            val = valueexp.resolvestr(makefile, variables, [name])
-            self._map[name] = prevflavor, prevsource, prevvalue + ' ' + val, None
+            val = prev_value_exp.resolvestr(makefile, variables, [name])
+            self._map[name] = prev_flavor, prev_source, prev_value + ' ' + val, None
             return
 
-        newvalue = prevvalue + ' ' + value
-        self._map[name] = prevflavor, prevsource, newvalue, None
+        new_value = prev_value + ' ' + value
+        self._map[name] = prev_flavor, prev_source, new_value, None
 
-    def merge(self, other):
+    def merge(self, other: 'Variables'):
         assert isinstance(other, Variables)
+
         for k, flavor, source, value in other:
             self.set(k, flavor, source, value)
 
-    def __iter__(self):
-        for k, (flavor, source, value, valueexp) in self._map.items():
+    def __iter__(self) -> Iterator[Tuple[str, Flavor, Source, str]]:
+        for k, (flavor, source, value, value_exp) in self._map.items():
             yield k, flavor, source, value
 
-    def __contains__(self, item):
-        return item in self._map
+    def __contains__(self, name: str) -> bool:
+        return name in self._map
+
+    def __str__(self) -> str:
+        vars_ = []
+        for name, (flavor, source, value, value_exp) in self._map.items():
+            vars_.append(f"{name}<{flavor.name, source.name}>={value} ({value_exp})")
+        return f"{type(self).__name__}({', '.join(vars_)})"
 
 
 class Pattern(object):
@@ -654,9 +726,9 @@ class Pattern(object):
 
         return None
 
-    def resolve(self, dir, stem):
+    def resolve(self, dir_, stem):
         if self.ispattern():
-            return dir + self.data[0] + stem + self.data[1]
+            return dir_ + self.data[0] + stem + self.data[1]
 
         return self.data[0]
 
@@ -1053,8 +1125,8 @@ class Target(object):
 
         _log.info("%sSearching for implicit rule to make '%s'", indent, self.target)
 
-        dir, s, file = util.strrpartition(self.target, '/')
-        dir = dir + s
+        dir_, s, file = util.strrpartition(self.target, '/')
+        dir_ = dir_ + s
 
         candidates = []  # list of PatternRuleInstance
 
@@ -1068,7 +1140,7 @@ class Target(object):
             if not len(r.commands):
                 continue
 
-            for ri in r.matchesfor(dir, file, hasmatch):
+            for ri in r.matchesfor(dir_, file, hasmatch):
                 candidates.append(ri)
 
         newcandidates = []
@@ -1120,7 +1192,7 @@ class Target(object):
         _log.info("%sCouldn't find implicit rule to remake '%s'", indent, self.target)
 
     def ruleswithcommands(self):
-        "The number of rules with commands"
+        """The number of rules with commands"""
         return reduce(lambda i, rule: i + (len(rule.commands) > 0), self.rules, 0)
 
     def resolvedeps(self, makefile, targetstack, rulestack, recursive):
@@ -1211,8 +1283,8 @@ class Target(object):
 
                         libname = lp.resolve('', stem)
 
-                        for dir in searchdirs:
-                            libpath = util.normaljoin(dir, libname).replace('\\', '/')
+                        for dir_ in searchdirs:
+                            libpath = util.normaljoin(dir_, libname).replace('\\', '/')
                             fspath = util.normaljoin(makefile.workdir, libpath)
                             mtime = getmtime(fspath)
                             if mtime is not None:
@@ -1226,8 +1298,8 @@ class Target(object):
 
         search = [self.target]
         if not os.path.isabs(self.target):
-            search += [util.normaljoin(dir, self.target).replace('\\', '/')
-                       for dir in makefile.getvpath(self.target)]
+            search += [util.normaljoin(dir_, self.target).replace('\\', '/')
+                       for dir_ in makefile.getvpath(self.target)]
 
         targetandtime = self.searchinlocs(makefile, search)
         if targetandtime is not None:
@@ -1248,7 +1320,7 @@ class Target(object):
             mtime = getmtime(fspath)
             #            _log.info("Searching %s ... checking %s ... mtime %r" % (t, fspath, mtime))
             if mtime is not None:
-                return (t, mtime)
+                return t, mtime
 
         return None
 
@@ -1294,7 +1366,7 @@ class Target(object):
                If there is no asynchronous activity to perform, the callback may be called directly.
         """
 
-        serial = makefile.context.jcount == 1
+        serial = makefile.context.job_count == 1
 
         if self._state == MAKESTATE_FINISHED:
             cb(error=self.error, didanything=self.didanything)
@@ -1370,9 +1442,9 @@ def filepart(p):
 
 
 def setautomatic(v, name, plist):
-    v.set(name, Variables.FLAVOR_SIMPLE, Variables.SOURCE_AUTOMATIC, ' '.join(plist))
-    v.set(name + 'D', Variables.FLAVOR_SIMPLE, Variables.SOURCE_AUTOMATIC, ' '.join((dirpart(p) for p in plist)))
-    v.set(name + 'F', Variables.FLAVOR_SIMPLE, Variables.SOURCE_AUTOMATIC, ' '.join((filepart(p) for p in plist)))
+    v.set(name, Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, ' '.join(plist))
+    v.set(name + 'D', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, ' '.join((dirpart(p) for p in plist)))
+    v.set(name + 'F', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, ' '.join((filepart(p) for p in plist)))
 
 
 def setautomaticvariables(v, makefile, target, prerequisites):
@@ -1415,22 +1487,22 @@ def splitcommand(command):
 def findmodifiers(command):
     """
     Find any of +-@% prefixed on the command.
-    @returns (command, isHidden, isRecursive, ignoreErrors, isNative)
+    @returns (command, is_hidden, is_recursive, ignore_errors, is_native)
     """
 
-    isHidden = False
-    isRecursive = False
-    ignoreErrors = False
-    isNative = False
+    is_hidden = False
+    is_recursive = False
+    ignore_errors = False
+    is_native = False
 
-    realcommand = command.lstrip(' \t\n@+-%')
-    modset = set(command[:-len(realcommand)])
-    return realcommand, '@' in modset, '+' in modset, '-' in modset, '%' in modset
+    real_command = command.lstrip(' \t\n@+-%')
+    mod_set = set(command[:-len(real_command)])
+    return real_command, '@' in mod_set, '+' in mod_set, '-' in mod_set, '%' in mod_set
 
 
 class _CommandWrapper(object):
-    def __init__(self, cline, ignoreErrors, loc, context, **kwargs):
-        self.ignoreErrors = ignoreErrors
+    def __init__(self, cline, ignore_errors, loc, context, **kwargs):
+        self.ignoreErrors = ignore_errors
         self.loc = loc
         self.cline = cline
         self.kwargs = kwargs
@@ -1449,13 +1521,12 @@ class _CommandWrapper(object):
 
 
 class _NativeWrapper(_CommandWrapper):
-    def __init__(self, cline, ignoreErrors, loc, context,
-                 pycommandpath, **kwargs):
-        _CommandWrapper.__init__(self, cline, ignoreErrors, loc, context,
+    def __init__(self, cline, ignore_errors, loc, context, py_command_path, **kwargs):
+        _CommandWrapper.__init__(self, cline, ignore_errors, loc, context,
                                  **kwargs)
-        if pycommandpath:
+        if py_command_path:
             self.pycommandpath = re.split('[%s\s]+' % os.pathsep,
-                                          pycommandpath)
+                                          py_command_path)
         else:
             self.pycommandpath = None
 
@@ -1487,24 +1558,24 @@ def getcommandsforrule(rule, target, makefile, prerequisites, stem):
     for c in rule.commands:
         cstring = c.resolvestr(makefile, v)
         for cline in splitcommand(cstring):
-            cline, isHidden, isRecursive, ignoreErrors, isNative = findmodifiers(cline)
-            if (isHidden or makefile.silent) and not makefile.justprint:
+            cline, is_hidden, is_recursive, ignore_errors, is_native = findmodifiers(cline)
+            if (is_hidden or makefile.silent) and not makefile.justprint:
                 echo = None
             else:
                 echo = "%s$ %s" % (c.loc, cline)
-            if not isNative:
-                yield _CommandWrapper(cline, ignoreErrors=ignoreErrors, env=env, cwd=makefile.workdir, loc=c.loc,
+            if not is_native:
+                yield _CommandWrapper(cline, ignore_errors=ignore_errors, env=env, cwd=makefile.workdir, loc=c.loc,
                                       context=makefile.context,
                                       echo=echo, justprint=makefile.justprint)
             else:
                 f, s, e = v.get("PYCOMMANDPATH", True)
                 if e:
                     e = e.resolvestr(makefile, v, ["PYCOMMANDPATH"])
-                yield _NativeWrapper(cline, ignoreErrors=ignoreErrors,
+                yield _NativeWrapper(cline, ignore_errors=ignore_errors,
                                      env=env, cwd=makefile.workdir,
                                      loc=c.loc, context=makefile.context,
                                      echo=echo, justprint=makefile.justprint,
-                                     pycommandpath=e)
+                                     py_command_path=e)
 
 
 class Rule(object):
@@ -1551,13 +1622,13 @@ class PatternRuleInstance(object):
     different internals, forwarding most information on to the PatternRule.
     """
 
-    def __init__(self, prule, dir, stem, ismatchany):
+    def __init__(self, prule, dir_, stem, ismatchany):
         assert isinstance(prule, PatternRule)
 
-        self.dir = dir
+        self.dir = dir_
         self.stem = stem
         self.prule = prule
-        self.prerequisites = prule.prerequisitesforstem(dir, stem)
+        self.prerequisites = prule.prerequisitesforstem(dir_, stem)
         self.doublecolon = prule.doublecolon
         self.loc = prule.loc
         self.ismatchany = ismatchany
@@ -1601,7 +1672,7 @@ class PatternRule(object):
 
         return False
 
-    def matchesfor(self, dir, file, skipsinglecolonmatchany):
+    def matchesfor(self, dir_, file, skipsinglecolonmatchany):
         """
         Determine all the target patterns of this rule that might match target t.
         @yields a PatternRuleInstance for each.
@@ -1613,18 +1684,18 @@ class PatternRule(object):
                 if skipsinglecolonmatchany and not self.doublecolon:
                     continue
 
-                yield PatternRuleInstance(self, dir, file, True)
+                yield PatternRuleInstance(self, dir_, file, True)
             else:
-                stem = p.match(dir + file)
+                stem = p.match(dir_ + file)
                 if stem is not None:
                     yield PatternRuleInstance(self, '', stem, False)
                 else:
                     stem = p.match(file)
                     if stem is not None:
-                        yield PatternRuleInstance(self, dir, stem, False)
+                        yield PatternRuleInstance(self, dir_, stem, False)
 
-    def prerequisitesforstem(self, dir, stem):
-        return [p.resolve(dir, stem) for p in self.prerequisites]
+    def prerequisitesforstem(self, dir_, stem):
+        return [p.resolve(dir_, stem) for p in self.prerequisites]
 
 
 class _RemakeContext(object):
@@ -1682,7 +1753,7 @@ class Makefile(object):
         self.env = env
 
         self.variables = Variables()
-        self.variables.readfromenvironment(env)
+        self.variables.read_from_environment(env)
 
         self.context = context
         self.exportedvars = {}
@@ -1700,45 +1771,36 @@ class Makefile(object):
             workdir = os.getcwd()
         workdir = os.path.realpath(workdir)
         self.workdir = workdir
-        self.variables.set('CURDIR', Variables.FLAVOR_SIMPLE,
-                           Variables.SOURCE_AUTOMATIC, workdir.replace('\\', '/'))
+        self.variables.set('CURDIR', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, workdir.replace('\\', '/'))
 
         # the list of included makefiles, whether or not they existed
         self.included = []
 
-        self.variables.set('MAKE_RESTARTS', Variables.FLAVOR_SIMPLE,
-                           Variables.SOURCE_AUTOMATIC, restarts > 0 and str(restarts) or '')
+        self.variables.set('MAKE_RESTARTS', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC,
+                           restarts > 0 and str(restarts) or '')
 
-        self.variables.set('.PYMAKE', Variables.FLAVOR_SIMPLE,
-                           Variables.SOURCE_MAKEFILE, "1")
+        self.variables.set('.PYMAKE', Variables.Flavor.SIMPLE, Variables.Source.MAKEFILE, "1")
         if make is not None:
-            self.variables.set('MAKE', Variables.FLAVOR_SIMPLE,
-                               Variables.SOURCE_MAKEFILE, make)
+            self.variables.set('MAKE', Variables.Flavor.SIMPLE, Variables.Source.MAKEFILE, make)
 
         if makeoverrides != '':
-            self.variables.set('-*-command-variables-*-', Variables.FLAVOR_SIMPLE,
-                               Variables.SOURCE_AUTOMATIC, makeoverrides)
+            self.variables.set('-*-command-variables-*-', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC,
+                               makeoverrides)
             makeflags += ' -- $(MAKEOVERRIDES)'
 
-        self.variables.set('MAKEOVERRIDES', Variables.FLAVOR_RECURSIVE,
-                           Variables.SOURCE_ENVIRONMENT,
+        self.variables.set('MAKEOVERRIDES', Variables.Flavor.RECURSIVE, Variables.Source.ENVIRONMENT,
                            '${-*-command-variables-*-}')
 
-        self.variables.set('MAKEFLAGS', Variables.FLAVOR_RECURSIVE,
-                           Variables.SOURCE_MAKEFILE, makeflags)
+        self.variables.set('MAKEFLAGS', Variables.Flavor.RECURSIVE, Variables.Source.MAKEFILE, makeflags)
         self.exportedvars['MAKEFLAGS'] = True
 
         self.makelevel = makelevel
-        self.variables.set('MAKELEVEL', Variables.FLAVOR_SIMPLE,
-                           Variables.SOURCE_MAKEFILE, str(makelevel))
+        self.variables.set('MAKELEVEL', Variables.Flavor.SIMPLE, Variables.Source.MAKEFILE, str(makelevel))
 
-        self.variables.set('MAKECMDGOALS', Variables.FLAVOR_SIMPLE,
-                           Variables.SOURCE_AUTOMATIC, ' '.join(targets))
+        self.variables.set('MAKECMDGOALS', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, ' '.join(targets))
 
         for vname, val in implicit.variables.items():
-            self.variables.set(vname,
-                               Variables.FLAVOR_SIMPLE,
-                               Variables.SOURCE_IMPLICIT, val)
+            self.variables.set(vname, Variables.Flavor.SIMPLE, Variables.Source.IMPLICIT, val)
 
     def foundtarget(self, t):
         """
@@ -1748,8 +1810,7 @@ class Makefile(object):
         flavor, source, value = self.variables.get('.DEFAULT_GOAL')
         if self.defaulttarget is None and t != '.PHONY' and value is None:
             self.defaulttarget = t
-            self.variables.set('.DEFAULT_GOAL', Variables.FLAVOR_SIMPLE,
-                               Variables.SOURCE_AUTOMATIC, t)
+            self.variables.set('.DEFAULT_GOAL', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, t)
 
     def getpatternvariables(self, pattern):
         assert isinstance(pattern, Pattern)
@@ -1846,7 +1907,7 @@ class Makefile(object):
                     stmts = parser.parsedepfile(fspath)
                 else:
                     stmts = parser.parsefile(fspath)
-                self.variables.append('MAKEFILE_LIST', Variables.SOURCE_AUTOMATIC, path, None, self)
+                self.variables.append('MAKEFILE_LIST', Variables.Source.AUTOMATIC, path, None, self)
                 stmts.execute(self, weak=weak)
                 self.gettarget(path).explicit = True
 

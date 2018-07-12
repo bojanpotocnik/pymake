@@ -103,7 +103,7 @@ def parsecommandlineargs(args):
             stmts.append(ExportDirective(vnameexp, concurrent_set=True))
             stmts.append(SetVariable(vnameexp, token=t,
                                      value=val, valueloc=Location('<command-line>', i, len(vname) + len(t)),
-                                     targetexp=None, source=data.Variables.SOURCE_COMMANDLINE))
+                                     targetexp=None, source=data.Variables.Source.COMMANDLINE))
         else:
             r.append(data.strip_dot_slash(a))
 
@@ -405,20 +405,20 @@ class SetVariable(Statement):
     """
     __slots__ = ('vnameexp', 'token', 'value', 'valueloc', 'targetexp', 'source')
 
-    def __init__(self, vnameexp, token, value, valueloc, targetexp, source=None):
+    def __init__(self, vnameexp, token, value, valueloc, targetexp, source: 'data.Variables.Source' = None):
         assert isinstance(vnameexp, (data.Expansion, data.StringExpansion))
         assert isinstance(value, str)
         assert targetexp is None or isinstance(targetexp, (data.Expansion, data.StringExpansion))
 
         if source is None:
-            source = data.Variables.SOURCE_MAKEFILE
+            source = data.Variables.Source.MAKEFILE
 
         self.vnameexp = vnameexp
         self.token = token
         self.value = value
         self.valueloc = valueloc
         self.targetexp = targetexp
-        self.source = source
+        self.source: data.Variables.Source = source
 
     def execute(self, makefile, context):
         vname = self.vnameexp.resolvestr(makefile, makefile.variables)
@@ -444,18 +444,18 @@ class SetVariable(Statement):
                 continue
 
             if self.token == '?=':
-                flavor = data.Variables.FLAVOR_RECURSIVE
+                flavor = data.Variables.Flavor.RECURSIVE
                 oldflavor, oldsource, oldval = v.get(vname, expand=False)
                 if oldval is not None:
                     continue
                 value = self.value
             elif self.token == '=':
-                flavor = data.Variables.FLAVOR_RECURSIVE
+                flavor = data.Variables.Flavor.RECURSIVE
                 value = self.value
             else:
                 assert self.token == ':='
 
-                flavor = data.Variables.FLAVOR_SIMPLE
+                flavor = data.Variables.Flavor.SIMPLE
                 d = parser.Data.fromstring(self.value, self.valueloc)
                 e, t, o = parser.parse_make_syntax(d, 0, (), parser.iterdata)
                 value = e.resolvestr(makefile, makefile.variables)
@@ -496,7 +496,7 @@ class SetVariable(Statement):
         value = ''.join(chars)
 
         prefix = ''
-        if self.source == data.Variables.SOURCE_OVERRIDE:
+        if self.source == data.Variables.Source.OVERRIDE:
             prefix = 'override '
 
         # SetVariable come in two flavors: simple and target-specific.
@@ -526,18 +526,21 @@ class SetVariable(Statement):
             self.token,
             value)
 
-    def name(self):
+    @property
+    def name(self) -> str:
         if isinstance(self.vnameexp, data.StringExpansion):
             return self.vnameexp.s
-        else:
+        elif isinstance(self.vnameexp, str):
             return self.vnameexp
+        else:
+            raise TypeError(f"Type of vnameexp is {type(self.vnameexp)} ({self.vnameexp})")
 
     def __str__(self):
-        return "<SetVariable(%s %s %s, %s)>" % (self.name(), self.token, self.value, self.targetexp)
+        return "<SetVariable(%s %s %s, %s)>" % (self.name, self.token, self.value, self.targetexp)
 
     def __repr__(self):
         return "<SetVariable(%s: %s %s %s, %s) at 0x%016X>" % (
-            self.valueloc, self.name(), self.token, self.value, self.targetexp, id(self)
+            self.valueloc, self.name, self.token, self.value, self.targetexp, id(self)
         )
 
 
@@ -678,7 +681,7 @@ class ConditionBlock(Statement):
         condition.loc = loc
 
         if len(self._groups) and isinstance(self._groups[-1][0], ElseCondition):
-            raise errors.SyntaxError("Multiple else conditions for block starting at %s" % self.loc, loc)
+            raise errors.MakeSyntaxError("Multiple else conditions for block starting at %s" % self.loc, loc)
 
         self._groups.append((condition, StatementList()))
 

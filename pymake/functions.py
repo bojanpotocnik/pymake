@@ -7,11 +7,15 @@ import logging
 import os
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 from . import data
 from . import errors
 from . import parser, util
 from .globrelative import glob
+
+if TYPE_CHECKING:  # To prevent cyclic and unused imports in runtime.
+    from . import parserdata
 
 log = logging.getLogger('pymake.data')
 
@@ -32,26 +36,32 @@ def emit_expansions(descend, *expansions):
                 yield e
 
 
-# noinspection PyUnresolvedReferences
-class Function(object):
+class Function:
     """
     An object that represents a function call. This class is always subclassed
     with the following methods and attributes:
 
-    minargs = minimum # of arguments
-    maxargs = maximum # of arguments (0 means unlimited)
+    name = function name
+    min_args = minimum # of arguments
+    max_args = maximum # of arguments (0 means unlimited)
 
     def resolve(self, makefile, variables, fd, setting)
         Calls the function
         calls fd.write() with strings
     """
+    name: str = None
+    """Function name"""
+    min_args: int = None
+    """Minimum number of arguments"""
+    max_args: int = None
+    """Maximum number of arguments (0 means unlimited)"""
 
     __slots__ = ('_arguments', 'loc')
 
-    def __init__(self, loc):
+    def __init__(self, loc: 'parserdata.Location'):
         self._arguments = []
-        self.loc = loc
-        assert self.minargs > 0
+        self.loc: 'parserdata.Location' = loc
+        assert self.min_args > 0
 
     def __getitem__(self, key):
         return self._arguments[key]
@@ -59,11 +69,11 @@ class Function(object):
     def setup(self):
         argc = len(self._arguments)
 
-        if argc < self.minargs:
-            raise errors.DataError("Not enough arguments to function %s, requires %s" % (self.name, self.minargs),
-                                   self.loc)
+        if argc < self.min_args:
+            raise errors.DataError("Not enough arguments to function %s, requires %s"
+                                   % (self.name, self.min_args), self.loc)
 
-        assert self.maxargs == 0 or argc <= self.maxargs, "Parser screwed up, gave us too many args"
+        assert self.max_args == 0 or argc <= self.max_args, "Parser screwed up, gave us too many args"
 
     def append(self, arg):
         assert isinstance(arg, (data.Expansion, data.StringExpansion))
@@ -87,7 +97,7 @@ class Function(object):
             if i == 0:
                 arg = arg.lstrip()
 
-            # Are balanced parens even OK?
+            # Are balanced parents even OK?
             if arg.count('(') != arg.count(')'):
                 curly = True
 
@@ -221,17 +231,18 @@ class VariableRef(Function):
         return self.vname == other.vname
 
 
+# noinspection SpellCheckingInspection
 class SubstitutionRef(Function):
     """$(VARNAME:.c=.o) and $(VARNAME:%.c=%.o)"""
 
     __slots__ = ('loc', 'vname', 'substfrom', 'substto')
 
     # noinspection PyMissingConstructor
-    def __init__(self, loc, varname, substfrom, substto):
+    def __init__(self, loc, var_name, subst_from, subst_to):
         self.loc = loc
-        self.vname = varname
-        self.substfrom = substfrom
-        self.substto = substto
+        self.vname = var_name
+        self.substfrom = subst_from
+        self.substto = subst_to
 
     def setup(self):
         assert False, "Shouldn't get here"
@@ -281,8 +292,8 @@ class SubstitutionRef(Function):
 
 class SubstFunction(Function):
     name = 'subst'
-    minargs = 3
-    maxargs = 3
+    min_args = 3
+    max_args = 3
 
     __slots__ = Function.__slots__
 
@@ -293,10 +304,11 @@ class SubstFunction(Function):
         fd.write(d.replace(s, r))
 
 
+# noinspection SpellCheckingInspection
 class PatSubstFunction(Function):
     name = 'patsubst'
-    minargs = 3
-    maxargs = 3
+    min_args = 3
+    max_args = 3
 
     __slots__ = Function.__slots__
 
@@ -311,8 +323,8 @@ class PatSubstFunction(Function):
 
 class StripFunction(Function):
     name = 'strip'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -320,10 +332,11 @@ class StripFunction(Function):
         util.joiniter(fd, self._arguments[0].resolvesplit(makefile, variables, setting))
 
 
+# noinspection SpellCheckingInspection
 class FindstringFunction(Function):
     name = 'findstring'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     __slots__ = Function.__slots__
 
@@ -337,8 +350,8 @@ class FindstringFunction(Function):
 
 class FilterFunction(Function):
     name = 'filter'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     __slots__ = Function.__slots__
 
@@ -350,10 +363,11 @@ class FilterFunction(Function):
                            if any((p.match(w) for p in plist))]))
 
 
+# noinspection SpellCheckingInspection
 class FilteroutFunction(Function):
     name = 'filter-out'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     __slots__ = Function.__slots__
 
@@ -367,8 +381,8 @@ class FilteroutFunction(Function):
 
 class SortFunction(Function):
     name = 'sort'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -379,8 +393,8 @@ class SortFunction(Function):
 
 class WordFunction(Function):
     name = 'word'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     __slots__ = Function.__slots__
 
@@ -394,10 +408,11 @@ class WordFunction(Function):
         fd.write(words[n - 1])
 
 
+# noinspection SpellCheckingInspection
 class WordlistFunction(Function):
     name = 'wordlist'
-    minargs = 3
-    maxargs = 3
+    min_args = 3
+    max_args = 3
 
     __slots__ = Function.__slots__
 
@@ -420,8 +435,8 @@ class WordlistFunction(Function):
 
 class WordsFunction(Function):
     name = 'words'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -429,58 +444,62 @@ class WordsFunction(Function):
         fd.write(str(len(self._arguments[0].resolvesplit(makefile, variables, setting))))
 
 
+# noinspection SpellCheckingInspection
 class FirstWordFunction(Function):
     name = 'firstword'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
     def resolve(self, makefile, variables, fd, setting):
-        l = self._arguments[0].resolvesplit(makefile, variables, setting)
-        if len(l):
-            fd.write(l[0])
+        lst = self._arguments[0].resolvesplit(makefile, variables, setting)
+        if len(lst):
+            fd.write(lst[0])
 
 
+# noinspection SpellCheckingInspection
 class LastWordFunction(Function):
     name = 'lastword'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
     def resolve(self, makefile, variables, fd, setting):
-        l = self._arguments[0].resolvesplit(makefile, variables, setting)
-        if len(l):
-            fd.write(l[-1])
+        lst = self._arguments[0].resolvesplit(makefile, variables, setting)
+        if len(lst):
+            fd.write(lst[-1])
 
 
+# noinspection SpellCheckingInspection
 def pathsplit(path, default='./'):
     """
     Splits a path into dirpart, filepart on the last slash. If there is no slash, dirpart
     is ./
     """
-    dir, slash, file = util.strrpartition(path, '/')
-    if dir == '':
+    dir_, slash, file = util.strrpartition(path, '/')
+    if dir_ == '':
         return default, file
 
-    return dir + slash, file
+    return dir_ + slash, file
 
 
 class DirFunction(Function):
     name = 'dir'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     def resolve(self, makefile, variables, fd, setting):
         fd.write(' '.join([pathsplit(path)[0]
                            for path in self._arguments[0].resolvesplit(makefile, variables, setting)]))
 
 
+# noinspection SpellCheckingInspection
 class NotDirFunction(Function):
     name = 'notdir'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -491,15 +510,15 @@ class NotDirFunction(Function):
 
 class SuffixFunction(Function):
     name = 'suffix'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
     @staticmethod
     def suffixes(words):
         for w in words:
-            dir, file = pathsplit(w)
+            dir_, file = pathsplit(w)
             base, dot, suffix = util.strrpartition(file, '.')
             if base != '':
                 yield dot + suffix
@@ -508,31 +527,33 @@ class SuffixFunction(Function):
         util.joiniter(fd, self.suffixes(self._arguments[0].resolvesplit(makefile, variables, setting)))
 
 
+# noinspection SpellCheckingInspection
 class BasenameFunction(Function):
     name = 'basename'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
     @staticmethod
     def basenames(words):
         for w in words:
-            dir, file = pathsplit(w, '')
+            dir_, file = pathsplit(w, '')
             base, dot, suffix = util.strrpartition(file, '.')
             if dot == '':
                 base = suffix
 
-            yield dir + base
+            yield dir_ + base
 
     def resolve(self, makefile, variables, fd, setting):
         util.joiniter(fd, self.basenames(self._arguments[0].resolvesplit(makefile, variables, setting)))
 
 
+# noinspection SpellCheckingInspection
 class AddSuffixFunction(Function):
     name = 'addsuffix'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     __slots__ = Function.__slots__
 
@@ -542,10 +563,11 @@ class AddSuffixFunction(Function):
         fd.write(' '.join([w + suffix for w in self._arguments[1].resolvesplit(makefile, variables, setting)]))
 
 
+# noinspection SpellCheckingInspection
 class AddPrefixFunction(Function):
     name = 'addprefix'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     def resolve(self, makefile, variables, fd, setting):
         prefix = self._arguments[0].resolvestr(makefile, variables, setting)
@@ -553,10 +575,11 @@ class AddPrefixFunction(Function):
         fd.write(' '.join([prefix + w for w in self._arguments[1].resolvesplit(makefile, variables, setting)]))
 
 
+# noinspection SpellCheckingInspection
 class JoinFunction(Function):
     name = 'join'
-    minargs = 2
-    maxargs = 2
+    min_args = 2
+    max_args = 2
 
     __slots__ = Function.__slots__
 
@@ -576,8 +599,8 @@ class JoinFunction(Function):
 
 class WildcardFunction(Function):
     name = 'wildcard'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -593,10 +616,11 @@ class WildcardFunction(Function):
         return True
 
 
+# noinspection SpellCheckingInspection
 class RealpathFunction(Function):
     name = 'realpath'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     def resolve(self, makefile, variables, fd, setting):
         fd.write(' '.join([os.path.realpath(os.path.join(makefile.workdir, path)).replace('\\', '/')
@@ -608,8 +632,8 @@ class RealpathFunction(Function):
 
 class AbspathFunction(Function):
     name = 'abspath'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -621,8 +645,8 @@ class AbspathFunction(Function):
 
 class IfFunction(Function):
     name = 'if'
-    minargs = 1
-    maxargs = 3
+    min_args = 1
+    max_args = 3
 
     __slots__ = Function.__slots__
 
@@ -642,8 +666,8 @@ class IfFunction(Function):
 
 class OrFunction(Function):
     name = 'or'
-    minargs = 1
-    maxargs = 0
+    min_args = 1
+    max_args = 0
 
     __slots__ = Function.__slots__
 
@@ -657,8 +681,8 @@ class OrFunction(Function):
 
 class AndFunction(Function):
     name = 'and'
-    minargs = 1
-    maxargs = 0
+    min_args = 1
+    max_args = 0
 
     __slots__ = Function.__slots__
 
@@ -675,8 +699,8 @@ class AndFunction(Function):
 
 class ForEachFunction(Function):
     name = 'foreach'
-    minargs = 3
-    maxargs = 3
+    min_args = 3
+    max_args = 3
 
     __slots__ = Function.__slots__
 
@@ -685,26 +709,25 @@ class ForEachFunction(Function):
         e = self._arguments[2]
 
         v = data.Variables(parent=variables)
-        firstword = True
+        first_word = True
 
         for w in self._arguments[1].resolvesplit(makefile, variables, setting):
-            if firstword:
-                firstword = False
+            if first_word:
+                first_word = False
             else:
                 fd.write(' ')
 
             # The $(origin) of the local variable must be "automatic" to
             # conform with GNU make. However, automatic variables have low
             # priority. So, we must force its assignment to occur.
-            v.set(vname, data.Variables.FLAVOR_SIMPLE,
-                  data.Variables.SOURCE_AUTOMATIC, w, force=True)
+            v.set(vname, data.Variables.Flavor.SIMPLE, data.Variables.Source.AUTOMATIC, w, force=True)
             e.resolve(makefile, v, fd, setting)
 
 
 class CallFunction(Function):
     name = 'call'
-    minargs = 1
-    maxargs = 0
+    min_args = 1
+    max_args = 0
 
     __slots__ = Function.__slots__
 
@@ -714,17 +737,17 @@ class CallFunction(Function):
             raise errors.DataError("Recursively setting variable '%s'" % (vname,))
 
         v = data.Variables(parent=variables)
-        v.set('0', data.Variables.FLAVOR_SIMPLE, data.Variables.SOURCE_AUTOMATIC, vname)
+        v.set('0', data.Variables.Flavor.SIMPLE, data.Variables.Source.AUTOMATIC, vname)
         for i in range(1, len(self._arguments)):
             param = self._arguments[i].resolvestr(makefile, variables, setting)
-            v.set(str(i), data.Variables.FLAVOR_SIMPLE, data.Variables.SOURCE_AUTOMATIC, param)
+            v.set(str(i), data.Variables.Flavor.SIMPLE, data.Variables.Source.AUTOMATIC, param)
 
         flavor, source, e = variables.get(vname)
 
         if e is None:
             return
 
-        if flavor == data.Variables.FLAVOR_SIMPLE:
+        if flavor == data.Variables.Flavor.SIMPLE:
             log.warning("%s: calling variable '%s' which is simply-expanded" % (self.loc, vname))
 
         # but we'll do it anyway
@@ -733,39 +756,39 @@ class CallFunction(Function):
 
 class ValueFunction(Function):
     name = 'value'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
     def resolve(self, makefile, variables, fd, setting):
-        varname = self._arguments[0].resolvestr(makefile, variables, setting)
+        var_name = self._arguments[0].resolvestr(makefile, variables, setting)
 
-        flavor, source, value = variables.get(varname, expand=False)
+        flavor, source, value = variables.get(var_name, expand=False)
         if value is not None:
             fd.write(value)
 
 
 class EvalFunction(Function):
     name = 'eval'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
-    def resolve(self, makefile, variables, fd, setting):
+    def resolve(self, makefile, variables, _, setting):
         if makefile.parsingfinished:
             # GNU make allows variables to be set by recursive expansion during
             # command execution. This seems really dumb to me, so I don't!
             raise errors.DataError("$(eval) not allowed via recursive expansion after parsing is finished", self.loc)
 
-        stmts = parser.parsestring(self._arguments[0].resolvestr(makefile, variables, setting),
-                                   'evaluation from %s' % self.loc)
-        stmts.execute(makefile)
+        statements = parser.parsestring(self._arguments[0].resolvestr(makefile, variables, setting),
+                                        'evaluation from %s' % self.loc)
+        statements.execute(makefile)
 
 
 class OriginFunction(Function):
     name = 'origin'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -775,18 +798,18 @@ class OriginFunction(Function):
         flavor, source, value = variables.get(vname)
         if source is None:
             r = 'undefined'
-        elif source == data.Variables.SOURCE_OVERRIDE:
+        elif source == data.Variables.Source.OVERRIDE:
             r = 'override'
 
-        elif source == data.Variables.SOURCE_MAKEFILE:
+        elif source == data.Variables.Source.MAKEFILE:
             r = 'file'
-        elif source == data.Variables.SOURCE_ENVIRONMENT:
+        elif source == data.Variables.Source.ENVIRONMENT:
             r = 'environment'
-        elif source == data.Variables.SOURCE_COMMANDLINE:
+        elif source == data.Variables.Source.COMMANDLINE:
             r = 'command line'
-        elif source == data.Variables.SOURCE_AUTOMATIC:
+        elif source == data.Variables.Source.AUTOMATIC:
             r = 'automatic'
-        elif source == data.Variables.SOURCE_IMPLICIT:
+        elif source == data.Variables.Source.IMPLICIT:
             r = 'default'
         else:
             raise ValueError("Unknown source: {}".format(source))
@@ -796,20 +819,20 @@ class OriginFunction(Function):
 
 class FlavorFunction(Function):
     name = 'flavor'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
     def resolve(self, makefile, variables, fd, setting):
-        varname = self._arguments[0].resolvestr(makefile, variables, setting)
+        var_name = self._arguments[0].resolvestr(makefile, variables, setting)
 
-        flavor, source, value = variables.get(varname)
+        flavor, source, value = variables.get(var_name)
         if flavor is None:
             r = 'undefined'
-        elif flavor == data.Variables.FLAVOR_RECURSIVE:
+        elif flavor == data.Variables.Flavor.RECURSIVE:
             r = 'recursive'
-        elif flavor == data.Variables.FLAVOR_SIMPLE:
+        elif flavor == data.Variables.Flavor.SIMPLE:
             r = 'simple'
         else:
             raise ValueError("Unknown flavor {}".format(flavor))
@@ -817,10 +840,11 @@ class FlavorFunction(Function):
         fd.write(r)
 
 
+# noinspection SpellCheckingInspection
 class ShellFunction(Function):
     name = 'shell'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
@@ -833,7 +857,7 @@ class ShellFunction(Function):
         # subprocess.Popen doesn't use the PATH set in the env argument for
         # finding the executable on some platforms (but strangely it does on
         # others!), so set os.environ['PATH'] explicitly.
-        oldpath = os.environ['PATH']
+        old_path = os.environ['PATH']
         if makefile.env is not None and 'PATH' in makefile.env:
             os.environ['PATH'] = makefile.env['PATH']
 
@@ -845,7 +869,7 @@ class ShellFunction(Function):
             print("Error executing command %s" % cline[0], e, file=sys.stderr)
             return
         finally:
-            os.environ['PATH'] = oldpath
+            os.environ['PATH'] = old_path
 
         stdout, stderr = p.communicate()
         stdout = stdout.replace('\r\n', '\n')
@@ -858,40 +882,41 @@ class ShellFunction(Function):
 
 class ErrorFunction(Function):
     name = 'error'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
-    def resolve(self, makefile, variables, fd, setting):
+    def resolve(self, makefile, variables, _, setting):
         v = self._arguments[0].resolvestr(makefile, variables, setting)
         raise errors.DataError(v, self.loc)
 
 
 class WarningFunction(Function):
     name = 'warning'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
-    def resolve(self, makefile, variables, fd, setting):
+    def resolve(self, makefile, variables, _, setting):
         v = self._arguments[0].resolvestr(makefile, variables, setting)
         log.warning(v)
 
 
 class InfoFunction(Function):
     name = 'info'
-    minargs = 1
-    maxargs = 1
+    min_args = 1
+    max_args = 1
 
     __slots__ = Function.__slots__
 
-    def resolve(self, makefile, variables, fd, setting):
+    def resolve(self, makefile, variables, _, setting):
         v = self._arguments[0].resolvestr(makefile, variables, setting)
         print(v)
 
 
+# noinspection SpellCheckingInspection
 functionmap = {
     'subst': SubstFunction,
     'patsubst': PatSubstFunction,

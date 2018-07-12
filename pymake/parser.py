@@ -51,8 +51,7 @@ _line_re = re.compile(r'\\*\n')
 
 class Data:
     """
-    A single virtual "line", which can be multiple source lines joined with
-    continuations.
+    A single virtual "line", which can be multiple source lines joined with continuations.
     """
 
     __slots__ = ('s', 'line_start', 'line_end', 'loc')
@@ -290,7 +289,7 @@ def iterdefinelines(it, startloc):
         results.append(d.s[d.line_start:d.line_end])
 
     # Falling off the end is an unterminated define!
-    raise errors.SyntaxError("define without matching endef", startloc)
+    raise errors.MakeSyntaxError("define without matching endef", startloc)
 
 
 def _ensureend(d, offset, msg):
@@ -300,7 +299,7 @@ def _ensureend(d, offset, msg):
 
     s = flattenmakesyntax(d, offset)
     if s != '' and not s.isspace():
-        raise errors.SyntaxError(msg, d.get_location(offset))
+        raise errors.MakeSyntaxError(msg, d.get_location(offset))
 
 
 _eqargstokenlist = ('(', "'", '"')
@@ -308,40 +307,40 @@ _eqargstokenlist = ('(', "'", '"')
 
 def ifeq(d, offset):
     if offset > d.line_end - 1:
-        raise errors.SyntaxError("No arguments after conditional", d.get_location(offset))
+        raise errors.MakeSyntaxError("No arguments after conditional", d.get_location(offset))
 
     # the variety of formats for this directive is rather maddening
     token = d.s[offset]
     if token not in _eqargstokenlist:
-        raise errors.SyntaxError("No arguments after conditional", d.get_location(offset))
+        raise errors.MakeSyntaxError("No arguments after conditional", d.get_location(offset))
 
     offset += 1
 
     if token == '(':
         arg1, t, offset = parse_make_syntax(d, offset, (',',), itermakefilechars)
         if t is None:
-            raise errors.SyntaxError("Expected two arguments in conditional", d.get_location(d.line_end))
+            raise errors.MakeSyntaxError("Expected two arguments in conditional", d.get_location(d.line_end))
 
         arg1.rstrip()
 
         offset = d.skip_whitespace(offset)
         arg2, t, offset = parse_make_syntax(d, offset, (')',), itermakefilechars)
         if t is None:
-            raise errors.SyntaxError("Unexpected text in conditional", d.get_location(offset))
+            raise errors.MakeSyntaxError("Unexpected text in conditional", d.get_location(offset))
 
         _ensureend(d, offset, "Unexpected text after conditional")
     else:
         arg1, t, offset = parse_make_syntax(d, offset, (token,), itermakefilechars)
         if t is None:
-            raise errors.SyntaxError("Unexpected text in conditional", d.get_location(d.line_end))
+            raise errors.MakeSyntaxError("Unexpected text in conditional", d.get_location(d.line_end))
 
         offset = d.skip_whitespace(offset)
         if offset == d.line_end:
-            raise errors.SyntaxError("Expected two arguments in conditional", d.get_location(offset))
+            raise errors.MakeSyntaxError("Expected two arguments in conditional", d.get_location(offset))
 
         token = d.s[offset]
         if token not in '\'"':
-            raise errors.SyntaxError("Unexpected text in conditional", d.get_location(offset))
+            raise errors.MakeSyntaxError("Unexpected text in conditional", d.get_location(offset))
 
         arg2, t, offset = parse_make_syntax(d, offset + 1, (token,), itermakefilechars)
 
@@ -508,16 +507,16 @@ def parsestring(s, filename):
             if kword == 'endif':
                 _ensureend(d, offset, "Unexpected data after 'endif' directive")
                 if len(condstack) == 1:
-                    raise errors.SyntaxError("unmatched 'endif' directive",
-                                             d.get_location(offset))
+                    raise errors.MakeSyntaxError("unmatched 'endif' directive",
+                                                 d.get_location(offset))
 
                 condstack.pop().endloc = d.get_location(offset)
                 continue
 
             if kword == 'else':
                 if len(condstack) == 1:
-                    raise errors.SyntaxError("unmatched 'else' directive",
-                                             d.get_location(offset))
+                    raise errors.MakeSyntaxError("unmatched 'else' directive",
+                                                 d.get_location(offset))
 
                 m = _conditionre.match(d.s, offset, d.line_end)
                 if m is None:
@@ -526,8 +525,8 @@ def parsestring(s, filename):
                 else:
                     kword = m.group(1)
                     if kword not in _conditionkeywords:
-                        raise errors.SyntaxError("Unexpected condition after 'else' directive.",
-                                                 d.get_location(offset))
+                        raise errors.MakeSyntaxError("Unexpected condition after 'else' directive.",
+                                                     d.get_location(offset))
 
                     startoffset = offset
                     offset = d.skip_whitespace(m.end(1))
@@ -543,7 +542,7 @@ def parsestring(s, filename):
                 continue
 
             if kword == 'endef':
-                raise errors.SyntaxError("endef without matching define", d.get_location(offset))
+                raise errors.MakeSyntaxError("endef without matching define", d.get_location(offset))
 
             if kword == 'define':
                 currule = False
@@ -584,14 +583,14 @@ def parsestring(s, filename):
                 vname.rstrip()
 
                 if token is None:
-                    raise errors.SyntaxError("Malformed override directive, need =", d.get_location(d.line_start))
+                    raise errors.MakeSyntaxError("Malformed override directive, need =", d.get_location(d.line_start))
 
                 value = flattenmakesyntax(d, offset).lstrip()
 
                 condstack[-1].append(
                     parserdata.SetVariable(vname, value=value, valueloc=d.get_location(offset), token=token,
                                            targetexp=None,
-                                           source=data.Variables.SOURCE_OVERRIDE))
+                                           source=data.Variables.Source.OVERRIDE))
                 continue
 
             if kword == 'export':
@@ -670,7 +669,7 @@ def parsestring(s, filename):
                     parserdata.SetVariable(e, value=value, valueloc=d.get_location(offset), token=token,
                                            targetexp=targets))
             elif token == '|':
-                raise errors.SyntaxError('order-only prerequisites not implemented', d.get_location(offset))
+                raise errors.MakeSyntaxError('order-only prerequisites not implemented', d.get_location(offset))
             else:
                 assert token == ':'
                 # static pattern rule
@@ -688,7 +687,7 @@ def parsestring(s, filename):
                     condstack[-1].append(parserdata.Command(e))
 
     if len(condstack) != 1:
-        raise errors.SyntaxError("Condition never terminated with endif", condstack[-1].loc)
+        raise errors.MakeSyntaxError("Condition never terminated with endif", condstack[-1].loc)
 
     return condstack[0]
 
@@ -728,7 +727,8 @@ _matchingbrace = {
 
 
 def parse_make_syntax(d: Data, offset: int, stop_on: Union[Tuple[str, ...], List[str]],
-                      iterator_function: IteratorFunction):
+                      iterator_function: IteratorFunction) \
+        -> Tuple['data.Expansion', Optional[str], Optional[int]]:
     """
     Given Data, parse it into a data.Expansion.
 
@@ -785,7 +785,7 @@ def parse_make_syntax(d: Data, offset: int, stop_on: Union[Tuple[str, ...], List
                     fname = token[2:].rstrip()
                     fn = functions.functionmap[fname](loc)
                     e = data.Expansion()
-                    if len(fn) + 1 == fn.maxargs:
+                    if len(fn) + 1 == fn.max_args:
                         tokenlist = (c, closebrace, '$')
                     else:
                         tokenlist = (',', c, closebrace, '$')
@@ -823,7 +823,7 @@ def parse_make_syntax(d: Data, offset: int, stop_on: Union[Tuple[str, ...], List
                 stacktop.function.append(stacktop.expansion.finish())
 
                 stacktop.expansion = data.Expansion()
-                if len(stacktop.function) + 1 == stacktop.function.maxargs:
+                if len(stacktop.function) + 1 == stacktop.function.max_args:
                     tokenlist = (stacktop.openbrace, stacktop.closebrace, '$')
                     stacktop.tokenlist = tokenlist
             elif token in (')', '}'):
@@ -882,7 +882,7 @@ def parse_make_syntax(d: Data, offset: int, stop_on: Union[Tuple[str, ...], List
             di = iterator_function(d, offset, stacktop.tokenlist, tokeniterator)
 
     if stacktop.parent is not None:
-        raise errors.SyntaxError("Unterminated function call", d.get_location(offset))
+        raise errors.MakeSyntaxError("Unterminated function call", d.get_location(offset))
 
     assert stacktop.parsestate == _PARSESTATE_TOPLEVEL
 
