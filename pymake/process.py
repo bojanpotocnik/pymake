@@ -15,6 +15,7 @@ import subprocess
 import sys
 import traceback
 from collections import deque
+from typing import Optional
 
 from . import command, util
 from . import errors
@@ -455,33 +456,40 @@ class ParallelContext(object):
     Manages the parallel execution of processes.
     """
 
-    _allcontexts = set()
+    _all_contexts = set()
     _condition = multiprocessing.Condition()
 
-    def __init__(self, jcount):
-        self.jcount = jcount
+    def __init__(self, job_count: int):
+        self.job_count = job_count
         self.exit = False
 
-        self.processpool = multiprocessing.Pool(processes=jcount)
+        if self.job_count:
+            self.process_pool = multiprocessing.Pool(processes=job_count)
+        else:
+            # Do not use multiprocessing, however allow "1 job".
+            self.process_pool = None
+            self.job_count = 1
+
         self.pending = deque()  # deque of (cb, args, kwargs)
         self.running = []  # list of (subprocess, cb)
 
-        self._allcontexts.add(self)
+        self._all_contexts.add(self)
 
-    def finish(self):
+    def finish(self) -> None:
         assert len(self.pending) == 0 and len(self.running) == 0, "pending: %i running: %i" % (
             len(self.pending), len(self.running))
-        self.processpool.close()
-        self.processpool.join()
-        self._allcontexts.remove(self)
+        if self.process_pool:
+            self.process_pool.close()
+            self.process_pool.join()
+        self._all_contexts.remove(self)
 
-    def run(self):
-        while len(self.pending) and len(self.running) < self.jcount:
+    def run(self) -> None:
+        while len(self.pending) and len(self.running) < self.job_count:
             cb, args, kwargs = self.pending.popleft()
             cb(*args, **kwargs)
 
     def defer(self, cb, *args, **kwargs):
-        assert self.jcount > 1 or not len(
+        assert self.job_count > 1 or not len(
             self.pending), "Serial execution error defering %r %r %r: currently pending %r" % (
             cb, args, kwargs, self.pending)
         self.pending.append((cb, args, kwargs))
@@ -502,7 +510,7 @@ class ParallelContext(object):
         """
 
         job = PopenJob(argv, executable=executable, shell=shell, env=env, cwd=cwd)
-        self.defer(self._docall_generic, self.processpool, job, cb, echo, justprint)
+        self.defer(self._docall_generic, self.process_pool, job, cb, echo, justprint)
 
     def call_native(self, module, method, argv, env, cwd, cb,
                     echo, justprint=False, pycommandpath=None):
@@ -511,7 +519,7 @@ class ParallelContext(object):
         """
 
         job = PythonJob(module, method, argv, env, cwd, pycommandpath)
-        self.defer(self._docall_generic, self.processpool, job, cb, echo, justprint)
+        self.defer(self._docall_generic, self.process_pool, job, cb, echo, justprint)
 
     @staticmethod
     def _waitany(condition):
@@ -548,17 +556,17 @@ class ParallelContext(object):
         """
 
         while True:
-            clist = list(ParallelContext._allcontexts)
+            clist = list(ParallelContext._all_contexts)
             for c in clist:
                 c.run()
 
-            dowait = any((len(c.running) for c in ParallelContext._allcontexts))
+            dowait = any((len(c.running) for c in ParallelContext._all_contexts))
             if dowait:
                 # Wait on local jobs first for perf
                 for job, cb in ParallelContext._waitany(ParallelContext._condition):
                     cb(job.exitcode)
             else:
-                assert any(len(c.pending) for c in ParallelContext._allcontexts)
+                assert any(len(c.pending) for c in ParallelContext._all_contexts)
 
 
 def makedeferrable(usercb, **userkwargs):
