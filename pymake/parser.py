@@ -37,6 +37,7 @@ coming.
 import logging
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import Union, List, Iterable, Callable, Tuple, Optional, Collection, Iterator, Match
 
@@ -61,6 +62,9 @@ class Data:
         self.line_start: int = line_start
         self.line_end: int = line_end
         self.loc: parserdata.Location = loc
+
+    def __str__(self) -> str:
+        return f"{type(self).__name__}({self.s[self.line_start:self.line_end]})"
 
     @staticmethod
     def fromstring(s: Optional[str], path: Union[str, Path, 'parserdata.Location']) -> 'Data':
@@ -668,23 +672,30 @@ def parsestring(s, filename):
                 condstack[-1].append(
                     parserdata.SetVariable(e, value=value, valueloc=d.get_location(offset), token=token,
                                            targetexp=targets))
-            elif token == '|':
-                raise errors.MakeSyntaxError('order-only prerequisites not implemented', d.get_location(offset))
-            else:
-                assert token == ':'
+
+            elif token in (":", "|"):
                 # static pattern rule
 
                 pattern = e
 
-                deps, token, offset = parse_make_syntax(d, offset, (';',), itermakefilechars)
+                deps, token2, offset = parse_make_syntax(d, offset, (';',), itermakefilechars)
 
-                condstack[-1].append(parserdata.StaticPatternRule(targets, pattern, deps, doublecolon))
+                if token == "|":
+                    warnings.warn("Rules with order-only prerequisites are currently treated as static pattern"
+                                  f" rules (in '{d}')")
+
+                    condstack[-1].append(parserdata.Rule(targets, pattern, deps))
+                else:
+                    condstack[-1].append(parserdata.StaticPatternRule(targets, pattern, deps, doublecolon))
                 currule = True
 
-                if token == ';':
+                if token2 == ';':
                     offset = d.skip_whitespace(offset)
-                    e, token, offset = parse_make_syntax(d, offset, (), itercommandchars)
+                    e, token2, offset = parse_make_syntax(d, offset, (), itercommandchars)
                     condstack[-1].append(parserdata.Command(e))
+
+            else:
+                raise ValueError(f"Invalid token '{token}' in '{d}'")
 
     if len(condstack) != 1:
         raise errors.MakeSyntaxError("Condition never terminated with endif", condstack[-1].loc)
@@ -887,3 +898,60 @@ def parse_make_syntax(d: Data, offset: int, stop_on: Union[Tuple[str, ...], List
     assert stacktop.parsestate == _PARSESTATE_TOPLEVEL
 
     return stacktop.expansion.finish(), None, None
+
+
+def parse_variables(makefile: Union['parserdata.StatementList', str, Path], makefile_path: Union[str, Path] = None, *,
+                    work_dir_is_makefile_dir: bool = True):
+    """
+    Parse only variables from the makefile(s).
+
+    :param makefile: Makefile content or path to the makefile. If valid file path is provided it is parsed
+                     using :ref:`parsefile`, otherwise provided string is parsed using :ref:`parsestring` (in
+                     that case `makefile_path` shall also be provided) to :class:`parserdata.StatementList`.
+    :param makefile_path: Path to the makefile used for statement location data when `makefile` parameter is string
+                          content of the makefile file.
+    :param work_dir_is_makefile_dir: Whether the current working directory shall be the same as the Makefile directory,
+                                     as this Makefile would be executed in the shell as `make ./Makefile`.
+
+    :return: Parsed variables.
+    """
+    # Shall not happen, but maybe just makefile_path is provided instead of makefile.
+    if not makefile:
+        makefile = makefile_path
+
+    # If file is provided, parse it using dedicated function instead of reading it to string.
+    if os.path.isfile(makefile):
+        makefile_path = makefile
+        makefile_statements = parsefile(makefile)
+    elif isinstance(makefile, str):
+        makefile_statements = parsestring(makefile, makefile_path)
+    elif isinstance(makefile, parserdata.StatementList):
+        makefile_statements = makefile
+    else:
+        raise TypeError(f"Invalid makefile type {type(makefile)}")
+
+    if work_dir_is_makefile_dir:
+        if not os.path.isfile(makefile_path):
+            raise ValueError(
+                f"Working directory shall be changed but provided Makefile path {makefile_path} is not valid")
+        work_dir = os.path.dirname(makefile_path)
+    else:
+        work_dir = None
+
+    makefile = data.Makefile(work_dir=work_dir, env={})
+    # Parse statements
+    makefile_statements.execute(makefile)
+    makefile.finishparsing()
+
+    # Remove all implicit variables, keep only ones present in the original Makefile.
+    # for name, source in [(name, source) for name, flavor, source, value in makefile.variables]:
+    #     if source != source.MAKEFILE:
+    #         del makefile.variables[name]
+    # The code above is not required as the following code removes all automatic variables anyway.
+    makefile_variable_names = set(s.name for s in
+                                  filter(lambda stmt: isinstance(stmt, parserdata.SetVariable),
+                                         makefile_statements))
+    for var_name in makefile.variables.names:
+        if var_name not in makefile_variable_names:
+            # noinspection PyProtectedMember
+            del makefile.variables._map[var_name]

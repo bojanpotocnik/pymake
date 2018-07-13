@@ -4,6 +4,7 @@ A representation of makefile data structures.
 import enum
 import logging
 import os
+import platform
 import re
 import sys
 from functools import reduce
@@ -634,6 +635,14 @@ class Variables:
         for name, (flavor, source, value, value_exp) in self._map.items():
             vars_.append(f"{name}<{flavor.name, source.name}>={value} ({value_exp})")
         return f"{type(self).__name__}({', '.join(vars_)})"
+
+    def __delitem__(self, key: str) -> None:
+        del self._map[key]
+
+    @property
+    def names(self) -> List[str]:
+        """Get all variable names"""
+        return list(self._map.keys())
 
 
 class Pattern(object):
@@ -1742,39 +1751,42 @@ class Makefile(object):
     state data.
     """
 
-    def __init__(self, workdir=None, env=None, restarts=0, make=None,
-                 makeflags='', makeoverrides='',
-                 makelevel=0, context=None, targets=(), keepgoing=False,
-                 silent=False, justprint=False):
+    def __init__(self, work_dir=None, env=None, restarts=0, make=None,
+                 makeflags='', make_overrides='',
+                 make_level=0, context=None, targets=(), keep_going=False,
+                 silent=False, just_print=False):
         self.defaulttarget = None
 
         if env is None:
             env = os.environ
         self.env = env
 
-        self.variables = Variables()
-        self.variables.read_from_environment(env)
-
         self.context = context
         self.exportedvars = {}
         self._targets = {}
-        self.keepgoing = keepgoing
+        self.keepgoing = keep_going
         self.silent = silent
-        self.justprint = justprint
+        self.justprint = just_print
         self._patternvariables = []  # of (pattern, variables)
         self.implicitrules = []
         self.parsingfinished = False
 
         self._patternvpaths = []  # of (pattern, [dir, ...])
 
-        if workdir is None:
-            workdir = os.getcwd()
-        workdir = os.path.realpath(workdir)
-        self.workdir = workdir
-        self.variables.set('CURDIR', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, workdir.replace('\\', '/'))
-
         # the list of included makefiles, whether or not they existed
         self.included = []
+
+        self.makelevel = make_level
+
+        if work_dir is None:
+            work_dir = os.getcwd()
+        work_dir = os.path.realpath(work_dir)
+        self.workdir = work_dir
+
+        self.variables = Variables()
+        self.variables.read_from_environment(env)
+
+        self.variables.set('CURDIR', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, work_dir.replace('\\', '/'))
 
         self.variables.set('MAKE_RESTARTS', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC,
                            restarts > 0 and str(restarts) or '')
@@ -1783,9 +1795,9 @@ class Makefile(object):
         if make is not None:
             self.variables.set('MAKE', Variables.Flavor.SIMPLE, Variables.Source.MAKEFILE, make)
 
-        if makeoverrides != '':
+        if make_overrides != '':
             self.variables.set('-*-command-variables-*-', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC,
-                               makeoverrides)
+                               make_overrides)
             makeflags += ' -- $(MAKEOVERRIDES)'
 
         self.variables.set('MAKEOVERRIDES', Variables.Flavor.RECURSIVE, Variables.Source.ENVIRONMENT,
@@ -1794,10 +1806,12 @@ class Makefile(object):
         self.variables.set('MAKEFLAGS', Variables.Flavor.RECURSIVE, Variables.Source.MAKEFILE, makeflags)
         self.exportedvars['MAKEFLAGS'] = True
 
-        self.makelevel = makelevel
-        self.variables.set('MAKELEVEL', Variables.Flavor.SIMPLE, Variables.Source.MAKEFILE, str(makelevel))
+        self.variables.set('MAKELEVEL', Variables.Flavor.SIMPLE, Variables.Source.MAKEFILE, str(make_level))
 
         self.variables.set('MAKECMDGOALS', Variables.Flavor.SIMPLE, Variables.Source.AUTOMATIC, ' '.join(targets))
+
+        if platform.system() == "Windows":
+            self.variables.set("OS", Variables.Flavor.SIMPLE, Variables.Source.ENVIRONMENT, "Windows_NT")
 
         for vname, val in implicit.variables.items():
             self.variables.set(vname, Variables.Flavor.SIMPLE, Variables.Source.IMPLICIT, val)

@@ -122,15 +122,15 @@ class _MakeContext(object):
                                           make='%s %s' % (
                                               sys.executable.replace('\\', '/'), make_py_path.replace('\\', '/')),
                                           makeflags=self.make_flags,
-                                          makeoverrides=self.overrides,
-                                          workdir=self.working_dir,
+                                          make_overrides=self.overrides,
+                                          work_dir=self.working_dir,
                                           context=self.context,
                                           env=self.env,
-                                          makelevel=self.make_level,
+                                          make_level=self.make_level,
                                           targets=self.targets,
-                                          keepgoing=self.options.keepgoing,
+                                          keep_going=self.options.keepgoing,
                                           silent=self.options.silent,
-                                          justprint=self.options.justprint)
+                                          just_print=self.options.justprint)
 
             self.restarts += 1
 

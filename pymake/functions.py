@@ -3,11 +3,12 @@ Makefile functions.
 """
 from __future__ import print_function
 
+import abc
 import logging
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 from . import data
 from . import errors
@@ -15,6 +16,7 @@ from . import parser, util
 from .globrelative import glob
 
 if TYPE_CHECKING:  # To prevent cyclic and unused imports in runtime.
+    import io
     from . import parserdata
 
 log = logging.getLogger('pymake.data')
@@ -132,6 +134,11 @@ class Function:
         filesystem, this will return False.
         """
         return False
+
+    @abc.abstractmethod
+    def resolve(self, makefile: 'data.Makefile', variables: 'data.Variables',
+                fd: 'io.StringIO', setting: List[str]) -> None:
+        raise NotImplementedError()
 
     def __len__(self):
         return len(self._arguments)
@@ -858,20 +865,33 @@ class ShellFunction(Function):
         # finding the executable on some platforms (but strangely it does on
         # others!), so set os.environ['PATH'] explicitly.
         old_path = os.environ['PATH']
-        if makefile.env is not None and 'PATH' in makefile.env:
-            os.environ['PATH'] = makefile.env['PATH']
 
         log.debug("%s: running command '%s'" % (self.loc, ' '.join(cline)))
-        try:
-            p = subprocess.Popen(cline, executable=executable, env=makefile.env, shell=False,
-                                 stdout=subprocess.PIPE, cwd=makefile.workdir)
-        except OSError as e:
-            print("Error executing command %s" % cline[0], e, file=sys.stderr)
-            return
-        finally:
-            os.environ['PATH'] = old_path
+        while True:
+            if makefile.env is not None and 'PATH' in makefile.env:
+                os.environ['PATH'] = makefile.env['PATH']
 
+            try:
+                p = subprocess.Popen(cline, executable=executable, env=makefile.env, shell=False,
+                                     stdout=subprocess.PIPE, cwd=makefile.workdir)
+                break
+            except OSError as e:
+                if isinstance(e, FileNotFoundError) and executable:
+                    # FileNotFoundError: [WinError 2] The system cannot find the file specified
+                    # Windows have trouble with the executable parameter, it shall be passed via arguments.
+                    executable = None
+                else:
+                    print("Error executing command %s" % cline[0], e, file=sys.stderr)
+                    return
+            finally:
+                os.environ['PATH'] = old_path
+
+        # noinspection PyUnboundLocalVariable
         stdout, stderr = p.communicate()
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode()
+        if isinstance(stderr, bytes):
+            _ = stderr.decode()
         stdout = stdout.replace('\r\n', '\n')
         if stdout.endswith('\n'):
             stdout = stdout[:-1]
